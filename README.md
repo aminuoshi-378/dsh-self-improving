@@ -43,6 +43,11 @@ test/
 ├── behavior-adapter.test.ts          # 8 tests — injection, preferences, model suggestion
 └── meta-cognition.test.ts            # 8 tests — LLM reflection, fallback, confidence boost
 
+benchmark/
+├── task-suite.ts                     # 20 predefined agent task scenarios with optimal paths
+├── sim-agent.ts                      # Simulated agent (with/without experience modes)
+└── run-benchmark.ts                  # A/B comparison runner + HTML report generator
+
 cordis.yml                             # dsh plugin mount configuration
 ```
 
@@ -60,6 +65,10 @@ npm run test:store
 npm run test:evaluator
 npm run test:adapter
 npm run test:meta
+
+# Run quantitative benchmark (A/B comparison)
+npm run benchmark
+# Then open benchmark-report.html in browser
 ```
 
 ## Mounting in dsh

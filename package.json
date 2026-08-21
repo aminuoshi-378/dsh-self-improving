@@ -10,10 +10,14 @@
     "test:store": "tsx test/experience-store.test.ts",
     "test:evaluator": "tsx test/outcome-evaluator.test.ts",
     "test:adapter": "tsx test/behavior-adapter.test.ts",
-    "test:meta": "tsx test/meta-cognition.test.ts"
+    "test:meta": "tsx test/meta-cognition.test.ts",
+    "benchmark": "tsx benchmark/run-benchmark.ts"
   },
   "dependencies": {
+    "@langchain/core": "^1.2.9",
+    "agentevals": "^0.0.7",
     "better-sqlite3": "^11.0.0",
+    "promptfoo": "^0.121.20",
     "ulid": "^2.3.0"
   },
   "devDependencies": {

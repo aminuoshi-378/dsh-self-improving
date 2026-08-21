@@ -1,0 +1,444 @@
+{
+  "baseline": {
+    "totalTasks": 20,
+    "completedTasks": 19,
+    "completionRate": 95,
+    "totalToolCalls": 112,
+    "successfulToolCalls": 82,
+    "toolEfficiency": 73.21428571428571,
+    "totalGuardTriggers": 2,
+    "totalTurns": 20,
+    "guardRate": 10,
+    "avgOutcomeScore": 0.773203373015873,
+    "totalTokens": 32400,
+    "tokenEfficiency": 0.5864197530864197
+  },
+  "enabled": {
+    "totalTasks": 20,
+    "completedTasks": 20,
+    "completionRate": 100,
+    "totalToolCalls": 88,
+    "successfulToolCalls": 81,
+    "toolEfficiency": 92.04545454545455,
+    "totalGuardTriggers": 0,
+    "totalTurns": 20,
+    "guardRate": 0,
+    "avgOutcomeScore": 0.9212202380952382,
+    "totalTokens": 27600,
+    "tokenEfficiency": 0.7246376811594203
+  },
+  "improvements": {
+    "completionImprovementPct": 5.263157894736842,
+    "toolEfficiencyImprovementPct": 25.720620842572075,
+    "guardImprovementPct": 100,
+    "outcomeScoreImprovementPct": 19.143328941003798,
+    "tokenEfficiencyImprovementPct": 23.569794050343262,
+    "overallImprovementPct": 34.73938034573119
+  },
+  "baselineTaskMetrics": [
+    {
+      "taskId": "bug-1",
+      "description": "Fix null pointer in user service",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-2",
+      "description": "Fix race condition in request handler",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8285714285714286,
+      "toolSuccessRate": 0.7142857142857143,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-3",
+      "description": "Fix memory leak in connection pool",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8166666666666667,
+      "toolSuccessRate": 0.6666666666666666,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-4",
+      "description": "Fix incorrect API response format",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.245,
+      "toolSuccessRate": 0.5,
+      "guardTriggers": 2,
+      "goalProgress": "stalled",
+      "completed": false
+    },
+    {
+      "taskId": "bug-5",
+      "description": "Fix broken type annotation in utils",
+      "taskPattern": "bugfix",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-6",
+      "description": "Fix off-by-one error in pagination",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8166666666666667,
+      "toolSuccessRate": 0.6666666666666666,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-1",
+      "description": "Add input validation to login form",
+      "taskPattern": "feature",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-2",
+      "description": "Add logging middleware",
+      "taskPattern": "feature",
+      "outcomeScore": 0.37625,
+      "toolSuccessRate": 0.625,
+      "guardTriggers": 2,
+      "goalProgress": "stalled",
+      "completed": false
+    },
+    {
+      "taskId": "feat-3",
+      "description": "Add retry logic for API calls",
+      "taskPattern": "feature",
+      "outcomeScore": 0.788888888888889,
+      "toolSuccessRate": 0.5555555555555556,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-4",
+      "description": "Add dark mode toggle",
+      "taskPattern": "feature",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-5",
+      "description": "Add rate limiting to auth endpoint",
+      "taskPattern": "feature",
+      "outcomeScore": 0.7928571428571429,
+      "toolSuccessRate": 0.5714285714285714,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-1",
+      "description": "Extract utility function from duplicated code",
+      "taskPattern": "refactoring",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-2",
+      "description": "Replace callback chain with async/await",
+      "taskPattern": "refactoring",
+      "outcomeScore": 0.8166666666666667,
+      "toolSuccessRate": 0.6666666666666666,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-3",
+      "description": "Split large component into smaller ones",
+      "taskPattern": "refactoring",
+      "outcomeScore": 0.8583333333333334,
+      "toolSuccessRate": 0.8333333333333334,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-4",
+      "description": "Consolidate error handling into middleware",
+      "taskPattern": "refactoring",
+      "outcomeScore": 0.27625,
+      "toolSuccessRate": 0.625,
+      "guardTriggers": 2,
+      "goalProgress": "stalled",
+      "completed": false
+    },
+    {
+      "taskId": "search-1",
+      "description": "Find all usages of deprecated API method",
+      "taskPattern": "search",
+      "outcomeScore": 0.8375,
+      "toolSuccessRate": 0.75,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "search-2",
+      "description": "Find the config file that sets timeout",
+      "taskPattern": "search",
+      "outcomeScore": 0.8166666666666667,
+      "toolSuccessRate": 0.6666666666666666,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "search-3",
+      "description": "Find where database connections are initialized",
+      "taskPattern": "search",
+      "outcomeScore": 0.8375,
+      "toolSuccessRate": 0.75,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "test-1",
+      "description": "Write unit tests for user service",
+      "taskPattern": "test-writing",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "test-2",
+      "description": "Write integration tests for auth flow",
+      "taskPattern": "test-writing",
+      "outcomeScore": 0.80625,
+      "toolSuccessRate": 0.625,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    }
+  ],
+  "enabledTaskMetrics": [
+    {
+      "taskId": "bug-1",
+      "description": "Fix null pointer in user service",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-2",
+      "description": "Fix race condition in request handler",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8583333333333334,
+      "toolSuccessRate": 0.8333333333333334,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-3",
+      "description": "Fix memory leak in connection pool",
+      "taskPattern": "bugfix",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-4",
+      "description": "Fix incorrect API response format",
+      "taskPattern": "bugfix",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-5",
+      "description": "Fix broken type annotation in utils",
+      "taskPattern": "bugfix",
+      "outcomeScore": 0.8375,
+      "toolSuccessRate": 0.75,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "bug-6",
+      "description": "Fix off-by-one error in pagination",
+      "taskPattern": "bugfix",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-1",
+      "description": "Add input validation to login form",
+      "taskPattern": "feature",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-2",
+      "description": "Add logging middleware",
+      "taskPattern": "feature",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-3",
+      "description": "Add retry logic for API calls",
+      "taskPattern": "feature",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-4",
+      "description": "Add dark mode toggle",
+      "taskPattern": "feature",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "feat-5",
+      "description": "Add rate limiting to auth endpoint",
+      "taskPattern": "feature",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-1",
+      "description": "Extract utility function from duplicated code",
+      "taskPattern": "refactoring",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-2",
+      "description": "Replace callback chain with async/await",
+      "taskPattern": "refactoring",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-3",
+      "description": "Split large component into smaller ones",
+      "taskPattern": "refactoring",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "refactor-4",
+      "description": "Consolidate error handling into middleware",
+      "taskPattern": "refactoring",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "search-1",
+      "description": "Find all usages of deprecated API method",
+      "taskPattern": "search",
+      "outcomeScore": 0.9,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "search-2",
+      "description": "Find the config file that sets timeout",
+      "taskPattern": "search",
+      "outcomeScore": 1,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "search-3",
+      "description": "Find where database connections are initialized",
+      "taskPattern": "search",
+      "outcomeScore": 0.9,
+      "toolSuccessRate": 1,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "test-1",
+      "description": "Write unit tests for user service",
+      "taskPattern": "test-writing",
+      "outcomeScore": 0.8500000000000001,
+      "toolSuccessRate": 0.8,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    },
+    {
+      "taskId": "test-2",
+      "description": "Write integration tests for auth flow",
+      "taskPattern": "test-writing",
+      "outcomeScore": 0.8285714285714286,
+      "toolSuccessRate": 0.7142857142857143,
+      "guardTriggers": 0,
+      "goalProgress": "advanced",
+      "completed": true
+    }
+  ],
+  "experiencesAccumulated": 60,
+  "lessonsGenerated": 3
+}

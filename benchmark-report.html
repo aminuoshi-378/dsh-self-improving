@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Self-Improving Benchmark Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; color: #94a3b8; }
+  .subtitle { color: #64748b; margin-bottom: 2rem; font-size: 0.9rem; }
+  .overall { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; text-align: center; }
+  .overall .num { font-size: 2.5rem; font-weight: 700; }
+  .overall .label { color: #94a3b8; font-size: 0.85rem; margin-top: 0.25rem; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+  .card { background: #1e293b; border-radius: 10px; padding: 1.25rem; }
+  .card .name { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .vals { display: flex; gap: 0.75rem; align-items: baseline; margin-top: 0.5rem; }
+  .card .base { color: #64748b; font-size: 1rem; }
+  .card .en { color: #e2e8f0; font-size: 1.2rem; font-weight: 600; }
+  .card .delta { font-size: 0.85rem; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 10px; overflow: hidden; }
+  th { background: #334155; padding: 0.6rem 0.75rem; text-align: left; font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.03em; }
+  td { padding: 0.5rem 0.75rem; border-top: 1px solid #334155; font-size: 0.85rem; }
+  tr:hover { background: #1e293b33; }
+  .summary { display: flex; gap: 2rem; margin-bottom: 1rem; color: #64748b; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Self-Improving Plugin Benchmark</h1>
+<p class="subtitle">A/B comparison: baseline (no plugin) vs enabled (with self-improving). Generated 2026-08-21T07:53:02.593Z</p>
+
+<div class="overall">
+  <div class="num" style="color:#16a34a">+34.7%</div>
+  <div class="label">Overall Improvement</div>
+</div>
+
+<div class="summary">
+  <span>Experiences accumulated: 60</span>
+  <span>Lessons generated: 3</span>
+</div>
+
+<h2>Metrics Comparison</h2>
+<div class="metrics">
+  <div class="card">
+    <div class="name">Task Completion Rate</div>
+    <div class="vals"><span class="base">95.0%</span> → <span class="en">100.0%</span></div>
+    <div class="delta" style="color:#16a34a">+5.3%</div>
+  </div>
+  <div class="card">
+    <div class="name">Tool Efficiency</div>
+    <div class="vals"><span class="base">73.2%</span> → <span class="en">92.0%</span></div>
+    <div class="delta" style="color:#16a34a">+25.7%</div>
+  </div>
+  <div class="card">
+    <div class="name">Guard Trigger Rate</div>
+    <div class="vals"><span class="base">10.0%</span> → <span class="en">0.0%</span></div>
+    <div class="delta" style="color:#16a34a">-100.0%</div>
+  </div>
+  <div class="card">
+    <div class="name">Avg Outcome Score (0-1)</div>
+    <div class="vals"><span class="base">0.773</span> → <span class="en">0.921</span></div>
+    <div class="delta" style="color:#16a34a">+19.1%</div>
+  </div>
+  <div class="card">
+    <div class="name">Token Efficiency</div>
+    <div class="vals"><span class="base">0.59</span> → <span class="en">0.72</span></div>
+    <div class="delta" style="color:#16a34a">+23.6%</div>
+  </div>
+</div>
+
+<h2>Per-Task Breakdown</h2>
+<table>
+  <thead><tr><th>Task ID</th><th>Pattern</th><th>Description</th><th>Baseline</th><th>Enabled</th><th>Delta</th></tr></thead>
+  <tbody><tr>
+      <td>bug-1</td>
+      <td>bugfix</td>
+      <td>Fix null pointer in user service</td>
+      <td>0.85</td>
+      <td>0.85</td>
+      <td style="color:#16a34a;font-weight:600">+0.00</td>
+    </tr>
+<tr>
+      <td>bug-2</td>
+      <td>bugfix</td>
+      <td>Fix race condition in request handler</td>
+      <td>0.83</td>
+      <td>0.86</td>
+      <td style="color:#16a34a;font-weight:600">+0.03</td>
+    </tr>
+<tr>
+      <td>bug-3</td>
+      <td>bugfix</td>
+      <td>Fix memory leak in connection pool</td>
+      <td>0.82</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.18</td>
+    </tr>
+<tr>
+      <td>bug-4</td>
+      <td>bugfix</td>
+      <td>Fix incorrect API response format</td>
+      <td>0.24</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.76</td>
+    </tr>
+<tr>
+      <td>bug-5</td>
+      <td>bugfix</td>
+      <td>Fix broken type annotation in utils</td>
+      <td>1.00</td>
+      <td>0.84</td>
+      <td style="color:#dc2626;font-weight:600">-0.16</td>
+    </tr>
+<tr>
+      <td>bug-6</td>
+      <td>bugfix</td>
+      <td>Fix off-by-one error in pagination</td>
+      <td>0.82</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.18</td>
+    </tr>
+<tr>
+      <td>feat-1</td>
+      <td>feature</td>
+      <td>Add input validation to login form</td>
+      <td>1.00</td>
+      <td>0.85</td>
+      <td style="color:#dc2626;font-weight:600">-0.15</td>
+    </tr>
+<tr>
+      <td>feat-2</td>
+      <td>feature</td>
+      <td>Add logging middleware</td>
+      <td>0.38</td>
+      <td>0.85</td>
+      <td style="color:#16a34a;font-weight:600">+0.47</td>
+    </tr>
+<tr>
+      <td>feat-3</td>
+      <td>feature</td>
+      <td>Add retry logic for API calls</td>
+      <td>0.79</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.21</td>
+    </tr>
+<tr>
+      <td>feat-4</td>
+      <td>feature</td>
+      <td>Add dark mode toggle</td>
+      <td>0.85</td>
+      <td>0.85</td>
+      <td style="color:#16a34a;font-weight:600">+0.00</td>
+    </tr>
+<tr>
+      <td>feat-5</td>
+      <td>feature</td>
+      <td>Add rate limiting to auth endpoint</td>
+      <td>0.79</td>
+      <td>0.85</td>
+      <td style="color:#16a34a;font-weight:600">+0.06</td>
+    </tr>
+<tr>
+      <td>refactor-1</td>
+      <td>refactoring</td>
+      <td>Extract utility function from duplicated code</td>
+      <td>1.00</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.00</td>
+    </tr>
+<tr>
+      <td>refactor-2</td>
+      <td>refactoring</td>
+      <td>Replace callback chain with async/await</td>
+      <td>0.82</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.18</td>
+    </tr>
+<tr>
+      <td>refactor-3</td>
+      <td>refactoring</td>
+      <td>Split large component into smaller ones</td>
+      <td>0.86</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.14</td>
+    </tr>
+<tr>
+      <td>refactor-4</td>
+      <td>refactoring</td>
+      <td>Consolidate error handling into middleware</td>
+      <td>0.28</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.72</td>
+    </tr>
+<tr>
+      <td>search-1</td>
+      <td>search</td>
+      <td>Find all usages of deprecated API method</td>
+      <td>0.84</td>
+      <td>0.90</td>
+      <td style="color:#16a34a;font-weight:600">+0.06</td>
+    </tr>
+<tr>
+      <td>search-2</td>
+      <td>search</td>
+      <td>Find the config file that sets timeout</td>
+      <td>0.82</td>
+      <td>1.00</td>
+      <td style="color:#16a34a;font-weight:600">+0.18</td>
+    </tr>
+<tr>
+      <td>search-3</td>
+      <td>search</td>
+      <td>Find where database connections are initialized</td>
+      <td>0.84</td>
+      <td>0.90</td>
+      <td style="color:#16a34a;font-weight:600">+0.06</td>
+    </tr>
+<tr>
+      <td>test-1</td>
+      <td>test-writing</td>
+      <td>Write unit tests for user service</td>
+      <td>0.85</td>
+      <td>0.85</td>
+      <td style="color:#16a34a;font-weight:600">+0.00</td>
+    </tr>
+<tr>
+      <td>test-2</td>
+      <td>test-writing</td>
+      <td>Write integration tests for auth flow</td>
+      <td>0.81</td>
+      <td>0.83</td>
+      <td style="color:#16a34a;font-weight:600">+0.02</td>
+    </tr></tbody>
+</table>
+</body>
+</html>
