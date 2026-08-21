@@ -1,0 +1,28 @@
+{
+  "name": "dsh-self-improving",
+  "version": "0.1.0",
+  "description": "A self-improving learning layer for DeepSeek Harness",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-vm-modules --loader tsx test/run-all.ts",
+    "test:store": "tsx test/experience-store.test.ts",
+    "test:evaluator": "tsx test/outcome-evaluator.test.ts",
+    "test:adapter": "tsx test/behavior-adapter.test.ts",
+    "test:meta": "tsx test/meta-cognition.test.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

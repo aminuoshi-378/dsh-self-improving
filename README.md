@@ -25,6 +25,64 @@ Layer 0: Existing deterministic loop    — ReactLoopAgent + event log + tool pi
 
 All injection is **advisory** (context the model can heed or ignore), never a forced config mutation. The learning layer is a pure plugin — unload it and the agent returns to fully deterministic behavior.
 
+## Project Structure
+
+```
+src/
+├── types/index.ts                    # Shared type definitions (TurnOutcome, ExperienceRecord, etc.)
+├── store/experience-store.ts         # Layer 3: SQLite-backed persistent memory
+├── evaluator/outcome-evaluator.ts    # Layer 1: Turn outcome scoring (read-only)
+├── adapter/behavior-adapter.ts       # Layer 2: Advisory experience/preference injection
+├── meta-cognition/
+│   └── meta-cognition-engine.ts      # Layer 4: LLM-based reflection & lesson extraction
+└── index.ts                          # Plugin entry point (apply function + exports)
+
+test/
+├── experience-store.test.ts          # 7 tests — store, query, eviction, confidence decay
+├── outcome-evaluator.test.ts         # 6 tests — scoring, edge cases, store integration
+├── behavior-adapter.test.ts          # 8 tests — injection, preferences, model suggestion
+└── meta-cognition.test.ts            # 8 tests — LLM reflection, fallback, confidence boost
+
+cordis.yml                             # dsh plugin mount configuration
+```
+
+## Getting Started
+
+```bash
+# Install dependencies
+npm install
+
+# Run tests
+npm test
+
+# Run individual test suites
+npm run test:store
+npm run test:evaluator
+npm run test:adapter
+npm run test:meta
+```
+
+## Mounting in dsh
+
+Add to your profile's `cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: self-improving
+      name: dsh-self-improving
+      config:
+        dbPath: ~/.dsh/experiences.db
+        metaCognitionEnabled: true
+        behaviorAdapterEnabled: true
+        maxRecords: 1000
+        minInjectionScore: 0.3
+```
+
 ## Status
 
-Design phase. Not yet implemented.
+Phases 1–3 implemented. All 29 tests passing.
+
+- [x] **Phase 1** — Experience Store + Outcome Evaluator (minimal closed loop)
+- [x] **Phase 2** — Behavior Adapter (experience/preference injection)
+- [x] **Phase 3** — Meta-Cognition Engine (LLM reflection + lesson extraction)
+- [ ] **Phase 4** — Adaptive Strategy Adjustment (model routing, tool recommendation, guard auto-tuning)
