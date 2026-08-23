@@ -1,0 +1,6 @@
+# dsh-rule-enforcement-gui — client bundle patch
+# Declares the browser plugin row the web app mounts.
+- insert:
+    - id: dsh-rule-enforcement-gui
+      name: dsh-rule-enforcement-gui
+      config: {}

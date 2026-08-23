@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "moduleDetection": "force",
+    "noEmit": true
+  },
+  "include": ["src/gui/client/**/*.ts", "src/gui/client/**/*.tsx"],
+  "references": [{ "path": "./tsconfig.json" }]
+}

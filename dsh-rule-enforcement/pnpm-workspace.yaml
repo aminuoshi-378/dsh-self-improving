@@ -1,0 +1,5 @@
+# pnpm ≥10 blocks dependency install scripts (strictDepBuilds) unless allowed.
+# esbuild (a transparent dependency of tsx) needs its postinstall to fetch the
+# native binary, so it must be allow-listed here. Do not remove.
+allowBuilds:
+  esbuild: true

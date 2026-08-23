@@ -1,0 +1,27 @@
+{
+  "name": "dsh-rule-enforcement",
+  "version": "0.1.4",
+  "description": "dsh plugin: user-editable soft rules injected into the agent's system prompt",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": ["dist", "cordis.patch.yml"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx test/run-all.ts"
+  },
+  "keywords": ["dsh", "deepseek-harness", "cordis", "plugin", "rules"],
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}

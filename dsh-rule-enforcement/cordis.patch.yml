@@ -1,0 +1,8 @@
+# dsh-rule-enforcement — bundle patch
+#
+# Installed via `dsh plugin --profile <p> add <pkg>`. Registers a user-editable
+# "rules" setting and injects it into the agent's system prompt (advisory).
+- insert:
+    - id: dsh-rule-enforcement
+      name: dsh-rule-enforcement
+      config: {}
