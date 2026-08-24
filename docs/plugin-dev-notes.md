@@ -367,3 +367,32 @@ export function apply(ctx: Context) {
 ### 热重载
 
 安装 `@deepseek-ai/cordis-plugin-hmr` 插件，保存文件时自动卸载旧实例、加载新代码。编辑 `cordis.yml` 也会触发更新（loader 按 `id` 比较配置项，只更新变化的部分）。
+
+---
+
+## 13. AI Agent 开发注意事项
+
+### 不要用工具直接启动 dsh web
+
+`dsh --profile web` 是**持续运行的服务进程**，不会退出——一直监听端口等待请求。
+
+在 AI Agent（如 CodeFuse）的 Bash 工具中直接运行 `dsh --profile web` 会导致：
+- Bash 工具阻塞在持续输出的进程上，最终超时
+- 即使用 `run_in_background` + `sleep N`，不退出的服务进程仍会让工具处于"运行中"状态
+
+**正确做法**：
+- 启动命令（`dsh --profile web`、`dsh --profile web --no-open`）交给**用户手动执行**
+- AI Agent 只做安装（`dsh plugin add`）、配置（`cordis.patch.yml`）、验证（`--dump-config`）等**会退出的操作**
+- 验证插件是否正常加载用 `dsh --profile benchmark "say hello"`（headless 模式会退出）
+
+### 插件打包注意事项
+
+1. **不能直接打包 `.ts` 源码**：Node 22 不支持从 `node_modules` 里的 `.ts` 文件做 type stripping。必须先编译成 `dist/index.js`（纯 JS），`package.json` 的 `main` 指向 `dist/index.js`，`files` 包含 `dist`。
+
+2. **`workspace:*` 依赖不能打包进 tarball**：pnpm 解析 `workspace:*` 时在 profile 目录下找不到对应路径。改用 `peerDependencies` + `peerDependenciesMeta: { optional: true }`，让 dsh 运行时提供这些包。
+
+3. **避免 bundle id 冲突**：如果同一个插件既存在于 dsh 仓库的 `packages/` 目录（workspace 包）又通过 tarball 安装到 profile，两者的 `cordis.patch.yml` 都会 `insert` 同一个 `id`，导致 `duplicate loader entry id` 错误。解决：workspace 包的 `package.json` 不要 `dsh.bundle` 字段，只让 tarball 版本作为 bundle 加载。
+
+4. **`~` 路径不自动展开**：`dbPath: '~/.dsh/experiences.db'` 传给 better-sqlite3 时 `~` 不会被展开。需要在代码里手动 `replace('~/', process.env.HOME + '/')`。
+
+5. **`better-sqlite3` 需要 `allowBuilds`**：在 profile 的 `pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，否则 pnpm 会跳过原生编译。
