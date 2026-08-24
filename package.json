@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-vm-modules --loader tsx test/run-all.ts",
+    "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts",
     "test:store": "tsx test/experience-store.test.ts",
     "test:evaluator": "tsx test/outcome-evaluator.test.ts",
     "test:adapter": "tsx test/behavior-adapter.test.ts",
@@ -27,6 +27,6 @@
     "typescript": "^5.6.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }
