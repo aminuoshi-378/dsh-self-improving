@@ -3,9 +3,9 @@
 Plugin packs for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a suite of optional, independently-mountable dsh plugins organized as two packs:
 
 1. **[`dsh-self-improving/`](#1-dsh-self-improving--cross-session-learning)** — a cross-session **learning layer**.
-2. **[`dsh-rule-enforcement/`](#2-dsh-rule-enforcement--cross-project-rules)** — a user **soft-rules** engine.
+2. **[`dsh-rule-enforcement/`](#2-dsh-rule-enforcement--user-rules)** — a user **rules** engine.
 
-Each pack can be mounted **standalone** (its sub-plugins) or **together**. See the per-pack sections below.
+Each pack can be mounted **standalone** or **together**.
 
 > Docs: [Design](docs/design.md) · [Plugin Dev Notes](docs/plugin-dev-notes.md) · [CHANGELOG](CHANGELOG.md)
 > 中文版：[README.zh-CN.md](README.zh-CN.md)
@@ -45,26 +45,98 @@ benchmark/  # 20 scenarios, simulated A/B runner + HTML report
 cordis.yml  # dsh mount config
 ```
 
-### Getting started
+### Install
+
+There are two ways to install this plugin into dsh.
+
+#### Option A: Build from source (recommended for development)
+
+Clone the repo and copy the plugin into dsh's workspace:
 
 ```bash
+# 1. Clone the repo
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving
+
+# 2. Install deps and build
 npm install
-npm test
-npm run benchmark   # then open benchmark-report.html
+npm run build
+
+# 3. Copy the plugin into dsh's packages directory
+cp -r . /path/to/deepseek-harness/packages/learning/self-improving/
+
+# 4. Add better-sqlite3 to dsh's pnpm-workspace.yaml allowBuilds
+#    Edit deepseek-harness/pnpm-workspace.yaml, add:
+#    allowBuilds:
+#      better-sqlite3: true
+
+# 5. Install deps in dsh
+cd /path/to/deepseek-harness
+pnpm install
+
+# 6. Add to your profile's cordis.patch.yml (see Mount config below)
 ```
 
-### Mount in dsh
+#### Option B: Install as a pre-built tarball
+
+Build the tarball from source, then install via `dsh plugin`:
+
+```bash
+# 1. Clone and build
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving
+npm install
+npm run build
+
+# 2. Pack into a tarball
+npm pack    # produces dsh-self-improving-0.1.0.tgz
+
+# 3. Install into a dsh profile
+cd /path/to/deepseek-harness
+dsh plugin --profile <your-profile> add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+
+# 4. If pnpm fails on better-sqlite3, add to pnpm-workspace.yaml:
+#    allowBuilds:
+#      better-sqlite3: true
+#    Then run: pnpm install
+```
+
+### Mount config
+
+Add to your profile's `cordis.patch.yml`:
 
 ```yaml
 - insert:
     - id: self-improving
       name: dsh-self-improving
       config:
-        dbPath: ~/.dsh/experiences.db
-        metaCognitionEnabled: true
-        behaviorAdapterEnabled: true
-        maxRecords: 1000
-        minInjectionScore: 0.3
+        dbPath: ~/.dsh/experiences.db    # persistent storage (cross-session)
+        metaCognitionEnabled: true        # enable LLM reflection (Layer 4)
+        behaviorAdapterEnabled: true      # enable experience injection (Layer 2)
+        minInjectionScore: 0.3            # only inject experiences with score >= 0.3
+```
+
+### Verify it works
+
+After installing, run a task and check stderr for `[self-improving]` logs:
+
+```bash
+cd /path/to/deepseek-harness
+dsh --profile <your-profile> "create a file called hello.js"
+```
+
+You should see:
+```
+[self-improving] plugin loaded {"dbPath":"~/.dsh/experiences.db",...}
+[self-improving] agent/pre-step fired — turn=1 step=1
+[self-improving] tool/result — write OK
+[self-improving] agent/turn-stopping fired — turn=1
+[self-improving] turn 1 scored — score=0.78 tools=1 successRate=1.00
+```
+
+Run a **second** task — you should see experience injection:
+```
+[self-improving] injecting 1 past experiences into pre-step (best score 0.78)
 ```
 
 ### How it works
@@ -89,55 +161,87 @@ Phases 1–3 implemented, 29 tests passing. Phase 4 (adaptive strategy) pending.
 
 ---
 
-## 2. `dsh-rule-enforcement/` — User soft-rules injection
+## 2. `dsh-rule-enforcement/` — User rules injection
 
-A minimal plugin: injects **a block of text the user edits in the WebUI**
-(markdown) into the agent's system prompt as advisory guidance — the model may
-heed or ignore it.
+A minimal plugin: injects **a markdown file** (`~/.dsh/rules.md`) into the agent's system prompt as **mandatory rules** the model must follow.
 
-- Edit entry: Settings → `dsh-rule-enforcement` `rules` field
-- Stored in `$DSH_HOME/settings.yaml`; changes take effect **live** (no restart)
-- Only dsh services used: `settings` (store text) + `systemPrompt` (inject)
+- Rules stored in `~/.dsh/rules.md` — a plain markdown file, easy to git-track and diff
+- Edit via WebUI (Settings → Rules tab) or any text editor
+- Changes take effect **live** (no restart needed)
+- Uses `systemPrompt.section()` for injection into the system prompt
 
 ### Install
 
+#### Option A: Build from source (recommended for development)
+
 ```bash
-cd dsh-rule-enforcement
-pnpm install        # install deps
-pnpm run build      # build → dist/
-pnpm pack           # pack → dsh-rule-enforcement-0.1.4.tgz
-dsh plugin --profile web add D:\absolute-path\dsh-rule-enforcement-0.1.4.tgz   # mount into web profile
+# 1. Clone the repo
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving/dsh-rule-enforcement
+
+# 2. Install deps and build
+pnpm install
+pnpm run build
+
+# 3. Copy into dsh or use as a workspace package
+cp -r . /path/to/deepseek-harness/packages/rule-enforcement/
+
+# 4. Install deps in dsh
+cd /path/to/deepseek-harness
+pnpm install
 ```
 
-- Use an **absolute path** for the tarball
-- To re-install the same version, first `dsh plugin --profile web remove dsh-rule-enforcement`
-- If `pnpm install` fails on `esbuild`, add `allowBuilds: { esbuild: true }` in `pnpm-workspace.yaml`
+#### Option B: Install as a pre-built tarball
+
+```bash
+# 1. Clone and build
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving/dsh-rule-enforcement
+pnpm install
+pnpm run build
+pnpm pack    # produces dsh-rule-enforcement-0.1.4.tgz
+
+# 2. Install into a dsh profile
+cd /path/to/deepseek-harness
+dsh plugin --profile <your-profile> add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
+```
 
 ### WebUI editor (optional)
 
-The Rules editor lives in a separate GUI plugin. Build, pack, and install it the
-same way from `src/gui`:
+The Rules editor lives in a separate GUI plugin:
 
 ```bash
 cd dsh-rule-enforcement/src/gui
-pnpm install        # install deps
-pnpm run build      # build → lib/
-pnpm run bundle     # bundle → lib/client.js
-pnpm pack           # pack → dsh-rule-enforcement-gui-VERSION.tgz
-dsh plugin --profile web add D:\absolute-path\dsh-rule-enforcement-gui-0.1.3.tgz   # mount into web profile
+pnpm install
+pnpm run build
+pnpm run bundle
+pnpm pack    # produces dsh-rule-enforcement-gui-0.1.3.tgz
+dsh plugin --profile <your-profile> add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
 ```
 
 After restarting `dsh web`, edit rules at Settings → Plugins → **Rules**.
 
-### Config
+### Mount config
+
+Add to your profile's `cordis.patch.yml`:
 
 ```yaml
-# the plugin's namespace in settings.yaml
-dsh-rule-enforcement:
-  rules: |
-    # rules you want the agent to follow (markdown, injected into the system prompt)
-    - reply in Chinese
-    - update CHANGELOG before committing
+- insert:
+    - id: dsh-rule-enforcement
+      name: dsh-rule-enforcement
+      config: {}
+```
+
+### Rules file
+
+The rules file is at `~/.dsh/rules.md`. Edit it directly or via the WebUI:
+
+```markdown
+# Project Rules
+
+- Reply in Chinese when the user writes in Chinese
+- Update CHANGELOG before committing
+- Use TypeScript for all new files
 ```
 
 ### Development
@@ -153,16 +257,18 @@ pnpm test
 
 ## Combined install
 
-Both packs coexist in the same profile — just insert both (dsh's normal plugin combinator):
+Both packs coexist in the same profile — just insert both:
 
 ```yaml
 - insert:
-    - id: self-improving            # from dsh-self-improving
+    - id: self-improving
       name: dsh-self-improving
-      config: { ... }
-    - id: dsh-rule-enforcement      # from dsh-rule-enforcement (soft rules)
+      config:
+        dbPath: ~/.dsh/experiences.db
+        metaCognitionEnabled: true
+        behaviorAdapterEnabled: true
+        minInjectionScore: 0.3
+    - id: dsh-rule-enforcement
       name: dsh-rule-enforcement
-      config: { ... }
+      config: {}
 ```
-
-A single top-level "preset" package that mounts both in one shot is NOT implemented — but it's unnecessary in dsh, whose profile composition already serves as the top-level preset.
