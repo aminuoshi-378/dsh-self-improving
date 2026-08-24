@@ -13,7 +13,7 @@ Each plugin works standalone or together with the other.
 
 ## Prerequisites
 
-- Node.js >= 22 (check with `node -v`)
+- Node.js >= 22 (check with `node -v`; `better-sqlite3@12` prebuilts cover Node 22–24)
 - dsh installed and configured with an LLM provider
 
 ---
@@ -181,8 +181,10 @@ The two plugins do not interfere with each other and can be enabled/disabled ind
 
 ## FAQ
 
-**`better-sqlite3` build error during install?**
-Add `allowBuilds: { better-sqlite3: true }` to `~/.dsh/profiles/web/pnpm-workspace.yaml`, then reinstall.
+**`better-sqlite3` build error during install (e.g. `ECONNRESET`, `gyp ERR! find VS`)?**
+Usually two causes:
+- `better-sqlite3` fetches its prebuilt binary from GitHub, which may be unreachable. The project ships `.npmrc` pointing `prebuild-install` at the npmmirror mirror, so a normal `pnpm install / pnpm run build` already works. If you removed `.npmrc`, restore it or set `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary`.
+- An old `better-sqlite3@11` has **no prebuilt binary for Node 24** and falls back to a local `node-gyp` compile (needs VS C++ workload). The project pins `better-sqlite3@^12`, which ships Node 24 prebuilds. Keep the pinned version; don't downgrade to v11.
 
 **Plugin not showing in the WebUI plugin list?**
 A plugin only appears in the WebUI when installed via `dsh plugin add <tarball>`. A workspace (`link:`) approach will not show it.

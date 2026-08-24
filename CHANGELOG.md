@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Docs: simplified zh/en READMEs (commands + brief notes only)
   - Fix: `getRulesFilePath` test now compares with `normalize()` for cross-platform path separators (was failing on Windows)
   - Docs: restored English `README.md` (per AGENTS.md), synced with `README.zh-CN.md`; GUI sub-README no longer hard-codes a stale tarball version
+  - Fix: upgraded `better-sqlite3@11` → `^12.11.1` and added `.npmrc` (npmmirror prebuild mirror) so the native module installs on Node 24 without a VS C++ toolchain (v11 has no Node-24 prebuilt and fell back to failing `node-gyp`)
 
 ### Planned
 - **Phase 4** — Adaptive Strategy Adjustment

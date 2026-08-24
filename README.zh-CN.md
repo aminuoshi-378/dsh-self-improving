@@ -13,7 +13,7 @@
 
 ## 前置要求
 
-- Node.js >= 22（`node -v` 检查）
+- Node.js >= 22（`node -v` 检查；`better-sqlite3@12` 提供 Node 22–24 预编译）
 - dsh 已安装并配置好 LLM provider
 
 ---
@@ -181,8 +181,10 @@ dsh --profile web
 
 ## 常见问题
 
-**安装时 `better-sqlite3` 报错？**
-在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，重装。
+**安装时 `better-sqlite3` 报错（如 `ECONNRESET`、`gyp ERR! find VS`）？**
+通常两个原因：
+- `better-sqlite3` 默认从 GitHub 下载预编译二进制，可能无法访问。本项目自带 `.npmrc`，把 `prebuild-install` 指向 npmmirror 镜像，正常 `pnpm install / pnpm run build` 即可。若删除了 `.npmrc`，恢复它或手动设置 `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary`。
+- 旧版 `better-sqlite3@11` 没有 Node 24 的预编译，会回退到本地 `node-gyp` 编译（需要 VS C++ 工具链）。本项目锁定 `better-sqlite3@^12`，带 Node 24 预编译，请保留锁定版本，不要降回 v11。
 
 **插件没出现在 WebUI 插件列表？**
 插件必须通过 `dsh plugin add <tarball>` 安装才会出现在 WebUI 里。workspace 方式（`link:`）不会显示。

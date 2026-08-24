@@ -21,7 +21,7 @@
     "pack": "pnpm run build && pnpm pack"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
