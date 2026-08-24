@@ -19,6 +19,9 @@
     "test": "node --import tsx test/run-all.ts"
   },
   "keywords": ["dsh", "deepseek-harness", "cordis", "plugin", "rules"],
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",

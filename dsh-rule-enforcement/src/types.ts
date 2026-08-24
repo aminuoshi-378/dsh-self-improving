@@ -1,9 +1,8 @@
 /**
  * Minimal dsh Context types for the dsh-rule-enforcement plugin.
  *
- * dsh provides real services (`settings`, `systemPrompt`, `logger`) at runtime;
- * we model only the surface this plugin touches. `inject`/`on`/`plugin`/`logger`
- * are Cordis Context built-ins (not services) and are accessed directly.
+ * Depends on `settings` (for GUI communication) and `systemPrompt` (for injection).
+ * Rules are persisted as a plain markdown file, bridged to/from settings.
  */
 
 /** Cordis Context built-in methods/services this plugin uses. */
@@ -14,6 +13,7 @@ export interface Context {
   settings: {
     register(ns: string, schema: unknown): {
       get(): { rules?: string }
+      update(patch: { rules?: string }): Promise<void>
       watch(cb: (next: { rules?: string }) => void): () => void
     }
   }
@@ -21,5 +21,8 @@ export interface Context {
   systemPrompt: {
     section(opts: { name: string; order: number; text: string | (() => string) }): unknown
   }
+  /** Cordis effect — returns cleanup on plugin unload. */
+  effect(fn: () => (() => void) | void, label?: string): unknown
+  /** Optional logger. */
   logger?: { info?(...a: unknown[]): void; warn?(...a: unknown[]): void }
 }
