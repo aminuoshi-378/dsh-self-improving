@@ -43,11 +43,16 @@ dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 
 After install you can see and manage the plugin under WebUI (Settings → Plugins).
 
-If install reports that the `better-sqlite3` build was skipped, edit `~/.dsh/profiles/web/pnpm-workspace.yaml` and add:
+**Ensure the dsh profile allows native builds.** In `~/.dsh/profiles/web/pnpm-workspace.yaml`, the template line `better-sqlite3: set this to true or false` is an invalid placeholder — pnpm then ignores the build script and install fails with `ERR_PNPM_IGNORED_BUILDS`. Set it to:
 
 ```yaml
 allowBuilds:
   better-sqlite3: true
+```
+
+If the npmmirror mirror is needed for the native binary (see FAQ), also create `~/.dsh/profiles/web/.npmrc` (and `deepseek-harness/.npmrc`) with:
+```
+better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
 ```
 
 Then reinstall:
@@ -181,10 +186,10 @@ The two plugins do not interfere with each other and can be enabled/disabled ind
 
 ## FAQ
 
-**`better-sqlite3` build error during install (e.g. `ECONNRESET`, `gyp ERR! find VS`)?**
+**`better-sqlite3` build error during install (e.g. `ECONNRESET`, `Request timed out`, `gyp ERR! find VS`)?**
 Usually two causes:
-- `better-sqlite3` fetches its prebuilt binary from GitHub, which may be unreachable. The project ships `.npmrc` pointing `prebuild-install` at the npmmirror mirror, so a normal `pnpm install / pnpm run build` already works. If you removed `.npmrc`, restore it or set `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary`.
-- An old `better-sqlite3@11` has **no prebuilt binary for Node 24** and falls back to a local `node-gyp` compile (needs VS C++ workload). The project pins `better-sqlite3@^12`, which ships Node 24 prebuilds. Keep the pinned version; don't downgrade to v11.
+- `better-sqlite3` fetches its prebuilt binary from GitHub, which may be unreachable. The project ships `.npmrc` pointing `prebuild-install` at the npmmirror mirror. In `.npmrc` set `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3` — **the host must include the package-name segment** `/binary/better-sqlite3` (bare `/binary` composes the wrong URL). Apply it to BOTH your project root and the dsh install context (deepseek-harness and/or `~/.dsh/profiles/web`) so `pnpm install` can resolve it.
+- A pre-v12 `better-sqlite3` has **no prebuilt for the running Node** and falls back to a local `node-gyp` compile (needs VS C++ workload). The project pins `better-sqlite3@^12`, which ships prebuilds for Node 22–24. Keep the pinned version. If the dsh repo still locks v11, run dsh under **Node 22** (abi127 prebuilds exist for v11).
 
 **Plugin not showing in the WebUI plugin list?**
 A plugin only appears in the WebUI when installed via `dsh plugin add <tarball>`. A workspace (`link:`) approach will not show it.
