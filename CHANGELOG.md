@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `dsh-rule-enforcement-gui@0.1.3` — WebUI Rules editor tab (Settings → Plugins → Rules)
     - Reads/writes via `ctx.settingsScope.bind` (fix: `Cannot read properties of undefined (reading 'save')` — slot system flattens the inject face into top-level props, not a nested `inject` object)
   - Docs: simplified zh/en READMEs (commands + brief notes only)
+  - Fix: `getRulesFilePath` test now compares with `normalize()` for cross-platform path separators (was failing on Windows)
+  - Docs: restored English `README.md` (per AGENTS.md), synced with `README.zh-CN.md`; GUI sub-README no longer hard-codes a stale tarball version
 
 ### Planned
 - **Phase 4** — Adaptive Strategy Adjustment

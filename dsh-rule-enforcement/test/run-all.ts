@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 
 import {
   getRulesFilePath,
@@ -23,7 +23,7 @@ const testFilePath = join(tmpDir, 'rules.md')
 
 test('getRulesFilePath returns ~/.dsh/rules.md by default', () => {
   const p = getRulesFilePath('/home/user/.dsh')
-  assert.equal(p, '/home/user/.dsh/rules.md')
+  assert.equal(normalize(p), normalize('/home/user/.dsh/rules.md'))
 })
 
 test('readRules creates the file with defaults when it does not exist', () => {
