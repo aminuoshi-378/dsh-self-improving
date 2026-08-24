@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "description": "A self-improving learning layer for DeepSeek Harness",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "cordis.yml"],
   "scripts": {
     "build": "tsc",
     "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts",
@@ -11,20 +17,26 @@
     "test:evaluator": "tsx test/outcome-evaluator.test.ts",
     "test:adapter": "tsx test/behavior-adapter.test.ts",
     "test:meta": "tsx test/meta-cognition.test.ts",
-    "benchmark": "tsx benchmark/run-benchmark.ts"
+    "benchmark": "tsx benchmark/run-benchmark.ts",
+    "pack": "pnpm run build && pnpm pack"
   },
   "dependencies": {
-    "@langchain/core": "^1.2.9",
-    "agentevals": "^0.0.7",
     "better-sqlite3": "^11.0.0",
-    "promptfoo": "^0.121.20",
     "ulid": "^2.3.0"
   },
   "devDependencies": {
+    "@langchain/core": "^1.2.9",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
+    "agentevals": "^0.0.7",
+    "promptfoo": "^0.121.20",
     "tsx": "^4.0.0",
     "typescript": "^5.6.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.yml"
+    }
   },
   "engines": {
     "node": ">=22.0.0"

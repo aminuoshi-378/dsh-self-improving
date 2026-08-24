@@ -23,38 +23,37 @@ agent 每次任务结束后自动评分、存入经验库，下次任务时把�
 ### 安装到 dsh
 
 ```bash
-# 1. 克隆并编译
+# 1. 克隆本仓库
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving
+
+# 2. 安装依赖并编译
 pnpm install
 pnpm run build
 
-# 2. 编译 dsh 运行时版本（TS → JS）
-cd /path/to/deepseek-harness/packages/learning/self-improving
-npx tsc src/index.ts --outDir dist \
-  --module ESNext --moduleResolution bundler --target ES2022 \
-  --strict --esModuleInterop --skipLibCheck --ignoreConfig
-
-# 3. 打包
+# 3. 打包成 tarball
 pnpm pack    # 生成 dsh-self-improving-0.1.0.tgz
 
-# 4. 安装到 dsh profile
+# 4. 安装到 dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 ```
 
-如果安装时提示 `better-sqlite3` 构建被忽略：
+安装后在 WebUI → Settings → Plugins 里可以看到和管理这个插件。
+
+如果安装时提示 `better-sqlite3` 构建被忽略，编辑 `~/.dsh/profiles/web/pnpm-workspace.yaml` 加入：
+
+```yaml
+allowBuilds:
+  better-sqlite3: true
+```
+
+然后重新安装：
 
 ```bash
-# 编辑 ~/.dsh/profiles/web/pnpm-workspace.yaml，加入：
-# allowBuilds:
-#   better-sqlite3: true
-# 然后重新安装：
 dsh plugin --profile web remove dsh-self-improving
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 ```
-
-安装后在 WebUI → Settings → Plugins 里可以看到和管理这个插件。
 
 ### 验证
 
@@ -108,14 +107,18 @@ pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
 ### 安装到 dsh
 
 ```bash
-# 1. 克隆并编译
+# 1. 克隆本仓库
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving/dsh-rule-enforcement
+
+# 2. 安装依赖并编译
 pnpm install
 pnpm run build
+
+# 3. 打包成 tarball
 pnpm pack    # 生成 dsh-rule-enforcement-0.1.4.tgz
 
-# 2. 安装到 dsh profile
+# 4. 安装到 dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
 ```
@@ -186,10 +189,10 @@ dsh --profile web
 插件会自动创建 `~/.dsh/` 目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。
 
 **tarball 安装时报 type stripping 错误？**
-打包前必须先把 `.ts` 编译成 `.js`（`npx tsc ... --outDir dist`），`package.json` 的 `main` 指向 `dist/index.js`，`files` 包含 `dist`。
+打包前必须先 `pnpm run build` 编译 `.ts` → `.js`，确保 `dist/` 目录存在。
 
 **`duplicate loader entry id`？**
-同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下的插件 `package.json` 没有 `dsh` 字段（只让 tarball 版本作为 bundle 加载）。
+同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下没有同名插件，或者其 `package.json` 没有 `dsh` 字段。
 
 ---
 
