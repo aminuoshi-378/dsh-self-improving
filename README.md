@@ -12,6 +12,24 @@ Each pack can be mounted **standalone** or **together**.
 
 ---
 
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) **>= 22** (use `nvm use 22` or install Node 22 LTS)
+- [pnpm](https://pnpm.io/) (comes with Node via corepack)
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) installed and working
+- A configured LLM provider in `~/.dsh/settings.yaml` (e.g. qwen, deepseek)
+
+```bash
+# Verify Node version
+node -v   # must be >= 22
+
+# Verify dsh works
+cd /path/to/deepseek-harness
+dsh --profile headless "say hello"
+```
+
+---
+
 ## 1. `dsh-self-improving/` — Cross-session learning
 
 A self-improving layer that dsh itself lacks: runtime self-modification exists (`cordis_*` toolset), but **cross-session learning** doesn't — feedback is never consumed, behavior params are static, dynamic plugins vanish on restart.
@@ -49,37 +67,9 @@ cordis.yml  # dsh mount config
 
 There are two ways to install this plugin into dsh.
 
-#### Option A: Build from source (recommended for development)
+#### Option A: Install as a pre-built tarball (recommended)
 
-Clone the repo and copy the plugin into dsh's workspace:
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/aminuoshi-378/dsh-self-improving.git
-cd dsh-self-improving
-
-# 2. Install deps and build
-npm install
-npm run build
-
-# 3. Copy the plugin into dsh's packages directory
-cp -r . /path/to/deepseek-harness/packages/learning/self-improving/
-
-# 4. Add better-sqlite3 to dsh's pnpm-workspace.yaml allowBuilds
-#    Edit deepseek-harness/pnpm-workspace.yaml, add:
-#    allowBuilds:
-#      better-sqlite3: true
-
-# 5. Install deps in dsh
-cd /path/to/deepseek-harness
-pnpm install
-
-# 6. Add to your profile's cordis.patch.yml (see Mount config below)
-```
-
-#### Option B: Install as a pre-built tarball
-
-Build the tarball from source, then install via `dsh plugin`:
+This method lets the WebUI plugin manager list and manage the plugin.
 
 ```bash
 # 1. Clone and build
@@ -88,33 +78,74 @@ cd dsh-self-improving
 npm install
 npm run build
 
-# 2. Pack into a tarball
-npm pack    # produces dsh-self-improving-0.1.0.tgz
+# 2. Compile the dsh adapter (TypeScript → JavaScript)
+#    The dsh runtime plugin is at packages/learning/self-improving/ in the dsh repo.
+#    If you have the dsh repo locally, the plugin source is already there.
+#    Compile it:
+cd /path/to/deepseek-harness/packages/learning/self-improving
+npx tsc src/index.ts --outDir dist \
+  --module ESNext --moduleResolution bundler --target ES2022 \
+  --strict --esModuleInterop --skipLibCheck --ignoreConfig
 
-# 3. Install into a dsh profile
+# 3. Pack into a tarball (from the plugin directory)
+pnpm pack    # produces dsh-self-improving-0.1.0.tgz
+
+# 4. Install into a dsh profile
 cd /path/to/deepseek-harness
-dsh plugin --profile <your-profile> add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 
-# 4. If pnpm fails on better-sqlite3, add to pnpm-workspace.yaml:
-#    allowBuilds:
-#      better-sqlite3: true
-#    Then run: pnpm install
+# 5. If pnpm warns about ignored build scripts for better-sqlite3:
+#    Edit ~/.dsh/profiles/web/pnpm-workspace.yaml, set:
+#      allowBuilds:
+#        better-sqlite3: true
+#    Then reinstall:
+dsh plugin --profile web remove dsh-self-improving
+dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+```
+
+After installation, the plugin appears in **WebUI → Settings → Plugins**.
+
+#### Option B: Build from source (for development)
+
+Clone the repo into dsh's workspace and use it as a workspace package:
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+
+# 2. Copy the plugin into dsh's packages directory
+cp -r dsh-self-improving /path/to/deepseek-harness/packages/learning/self-improving
+
+# 3. Add better-sqlite3 to dsh's pnpm-workspace.yaml allowBuilds
+#    Edit deepseek-harness/pnpm-workspace.yaml:
+#      allowBuilds:
+#        better-sqlite3: true
+
+# 4. Install deps in dsh
+cd /path/to/deepseek-harness
+pnpm install
+
+# 5. The plugin auto-loads via the packages/*/* glob.
+#    To make it a dsh bundle (auto-mount), ensure its package.json has:
+#      "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+#    To avoid duplicate loading when also installed as a tarball,
+#    remove the "dsh" key from the workspace package.json.
 ```
 
 ### Mount config
 
-Add to your profile's `cordis.patch.yml`:
+The tarball's `cordis.patch.yml` auto-mounts the plugin. If you need to override config, add to your profile's `cordis.patch.yml`:
 
 ```yaml
-- insert:
-    - id: self-improving
-      name: dsh-self-improving
-      config:
-        dbPath: ~/.dsh/experiences.db    # persistent storage (cross-session)
-        metaCognitionEnabled: true        # enable LLM reflection (Layer 4)
-        behaviorAdapterEnabled: true      # enable experience injection (Layer 2)
-        minInjectionScore: 0.3            # only inject experiences with score >= 0.3
+- id: self-improving
+  config:
+    dbPath: '~/.dsh/experiences.db'    # persistent storage (cross-session)
+    metaCognitionEnabled: true          # enable LLM reflection (Layer 4)
+    behaviorAdapterEnabled: true        # enable experience injection (Layer 2)
+    minInjectionScore: 0.3              # only inject experiences with score >= 0.3
 ```
+
+**Important:** `dbPath` must use `~/.dsh/experiences.db` (a file path) for cross-session persistence. Using `:memory:` means experiences are lost on restart.
 
 ### Verify it works
 
@@ -122,10 +153,12 @@ After installing, run a task and check stderr for `[self-improving]` logs:
 
 ```bash
 cd /path/to/deepseek-harness
-dsh --profile <your-profile> "create a file called hello.js"
+
+# First task — builds experience
+dsh --profile web "create a file called hello.js"
 ```
 
-You should see:
+Expected output on stderr:
 ```
 [self-improving] plugin loaded {"dbPath":"~/.dsh/experiences.db",...}
 [self-improving] agent/pre-step fired — turn=1 step=1
@@ -134,7 +167,7 @@ You should see:
 [self-improving] turn 1 scored — score=0.78 tools=1 successRate=1.00
 ```
 
-Run a **second** task — you should see experience injection:
+Run a **second** task — experience from the first run should be injected:
 ```
 [self-improving] injecting 1 past experiences into pre-step (best score 0.78)
 ```
@@ -172,26 +205,7 @@ A minimal plugin: injects **a markdown file** (`~/.dsh/rules.md`) into the agent
 
 ### Install
 
-#### Option A: Build from source (recommended for development)
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/aminuoshi-378/dsh-self-improving.git
-cd dsh-self-improving/dsh-rule-enforcement
-
-# 2. Install deps and build
-pnpm install
-pnpm run build
-
-# 3. Copy into dsh or use as a workspace package
-cp -r . /path/to/deepseek-harness/packages/rule-enforcement/
-
-# 4. Install deps in dsh
-cd /path/to/deepseek-harness
-pnpm install
-```
-
-#### Option B: Install as a pre-built tarball
+#### Option A: Install as a pre-built tarball (recommended)
 
 ```bash
 # 1. Clone and build
@@ -203,7 +217,21 @@ pnpm pack    # produces dsh-rule-enforcement-0.1.4.tgz
 
 # 2. Install into a dsh profile
 cd /path/to/deepseek-harness
-dsh plugin --profile <your-profile> add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
+```
+
+After installation, the plugin appears in **WebUI → Settings → Plugins**.
+
+#### Option B: Build from source (for development)
+
+```bash
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving/dsh-rule-enforcement
+pnpm install
+pnpm run build
+cp -r . /path/to/deepseek-harness/packages/rule-enforcement/
+cd /path/to/deepseek-harness
+pnpm install
 ```
 
 ### WebUI editor (optional)
@@ -216,21 +244,14 @@ pnpm install
 pnpm run build
 pnpm run bundle
 pnpm pack    # produces dsh-rule-enforcement-gui-0.1.3.tgz
-dsh plugin --profile <your-profile> add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
 ```
 
 After restarting `dsh web`, edit rules at Settings → Plugins → **Rules**.
 
 ### Mount config
 
-Add to your profile's `cordis.patch.yml`:
-
-```yaml
-- insert:
-    - id: dsh-rule-enforcement
-      name: dsh-rule-enforcement
-      config: {}
-```
+The tarball's `cordis.patch.yml` auto-mounts the plugin. No manual config needed.
 
 ### Rules file
 
@@ -243,6 +264,8 @@ The rules file is at `~/.dsh/rules.md`. Edit it directly or via the WebUI:
 - Update CHANGELOG before committing
 - Use TypeScript for all new files
 ```
+
+Rules are injected into the system prompt via `systemPrompt.section()` (order 200, after persona). They appear in every LLM request across all agent presets.
 
 ### Development
 
@@ -257,18 +280,45 @@ pnpm test
 
 ## Combined install
 
-Both packs coexist in the same profile — just insert both:
+Both packs coexist in the same profile. Install both as tarballs:
 
-```yaml
-- insert:
-    - id: self-improving
-      name: dsh-self-improving
-      config:
-        dbPath: ~/.dsh/experiences.db
-        metaCognitionEnabled: true
-        behaviorAdapterEnabled: true
-        minInjectionScore: 0.3
-    - id: dsh-rule-enforcement
-      name: dsh-rule-enforcement
-      config: {}
+```bash
+cd /path/to/deepseek-harness
+
+# Install both plugins
+dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
+
+# Start dsh web
+dsh --profile web
 ```
+
+Both plugins appear in **WebUI → Settings → Plugins** and can be enabled/disabled independently.
+
+---
+
+## Troubleshooting
+
+### `duplicate loader entry id: self-improving`
+
+The same plugin is loaded twice — once as a workspace package and once as a tarball. Fix: remove the `dsh.bundle` field from the workspace package's `package.json`, or remove the workspace package from `packages/` entirely.
+
+### `Cannot open database because the directory does not exist`
+
+The `dbPath` with `~/` is not expanded. The plugin code handles `~` expansion, but if you see this error, ensure `~/.dsh/` directory exists: `mkdir -p ~/.dsh`.
+
+### `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`
+
+The tarball contains `.ts` files instead of compiled `.js`. Fix: run `tsc` to compile `src/index.ts` → `dist/index.js` before `pnpm pack`, and ensure `package.json` has `"main": "dist/index.js"` and `"files": ["dist", ...]`.
+
+### `ignored build scripts: better-sqlite3`
+
+pnpm blocked the native build. Fix: add `allowBuilds: { better-sqlite3: true }` to the profile's `pnpm-workspace.yaml`, then reinstall.
+
+### Plugin not visible in WebUI plugin list
+
+The plugin must be installed via `dsh plugin --profile web add <tarball>` (not as a `link:` workspace package). Workspace packages are not shown in the WebUI plugin manager.
+
+### `agent/turn-stopping` not firing
+
+In headless mode (`dsh --profile headless`), the `turn-stopping` event fires after the turn completes. If you don't see `[self-improving] turn N scored` logs, ensure the plugin loaded (check for `plugin loaded` log on stderr).
