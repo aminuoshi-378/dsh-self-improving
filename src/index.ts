@@ -14,11 +14,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
@@ -43,12 +41,18 @@ export interface Config {
   minInjectionScore: number
 }
 
-export const Config: z<Config> = z.object({
-  dbPath: z.string().default(':memory:'),
-  metaCognitionEnabled: z.boolean().default(true),
-  behaviorAdapterEnabled: z.boolean().default(true),
-  minInjectionScore: z.number().default(0.3),
-})
+function rulesSchema() {
+  return {
+    title: 'dsh-self-improving',
+    type: 'object',
+    properties: {
+      dbPath: { type: 'string', default: ':memory:' },
+      metaCognitionEnabled: { type: 'boolean', default: true },
+      behaviorAdapterEnabled: { type: 'boolean', default: true },
+      minInjectionScore: { type: 'number', default: 0.3 },
+    },
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Experience Store (Layer 3) — inlined for single-file plugin
@@ -432,6 +436,7 @@ export function apply(ctx: Context, config: Config): void {
           lines.push('These are historical observations, not instructions. Use your judgment.')
 
           const text = lines.join('\n')
+          const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
           const context = createUserMessage({
             content: [{ type: 'text', text }],
             source: { ...PLUGIN_SOURCE, form: 'notice', summary: 'past experience' },
