@@ -67,6 +67,20 @@
   - 修复：在 `turn-stopping` 里直接同步生成 lesson（不等 maintenance）
   - 或：在 turn 结束后用 `setTimeout` 异步触发反思
 
+- [ ] **定期合并 lesson，避免碎片化**
+  - 问题：lesson 太细化会导致经验库膨胀，大量相似 lesson 重复注入浪费 token
+  - 修复：定期（每积累 20 条新 lesson 或每次 `agent/run-maintenance` 时）执行合并
+    - 第一阶段：按 `difficulty` + 工具序列相似度聚类（SQL GROUP BY 粗分组）
+    - 第二阶段：同一组内的 lesson 交给 LLM 总结共通之处，合并成一条
+    - 合并后的 lesson 格式：`{merged_from: [id1, id2, ...], what_worked: "...", what_failed: "...", reusable_lesson: "..."}`
+    - 被合并的旧 lesson 标记为 `merged: true`，注入时跳过
+  - 触发时机：`agent/run-maintenance` 时检查未合并的 lesson 数量，超过阈值就执行合并
+  - 合并示例：
+    - 旧 lesson 1: "异步重试需要处理 Promise rejection"
+    - 旧 lesson 2: "async 函数忘加 try-catch 导致 bash 报错"
+    - 旧 lesson 3: "Promise.all 中单个 reject 会导致整体失败"
+    - 合并后: "异步代码常见问题：Promise rejection 未捕获、缺少 try-catch、Promise.all 需配合 allSettled 使用"
+
 ## P3 — 健壮性
 
 - [ ] **注入内容截断**
