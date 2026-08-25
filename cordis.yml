@@ -1,23 +1,9 @@
-# dsh-self-improving plugin configuration
-# Mount this in your dsh profile to enable the self-improving learning layer.
-#
-# Usage:
-#   Add to your profile's cordis.patch.yml:
-#   - insert:
-#       - id: self-improving
-#         name: dsh-self-improving
-#         config:
-#           dbPath: ~/.dsh/experiences.db
-#           metaCognitionEnabled: true
-#           behaviorAdapterEnabled: true
-#           maxRecords: 1000
-#           minInjectionScore: 0.3
-
-- id: self-improving
-  name: dsh-self-improving
-  config:
-    dbPath: ":memory:"
-    metaCognitionEnabled: true
-    behaviorAdapterEnabled: true
-    maxRecords: 1000
-    minInjectionScore: 0.3
+# dsh-self-improving — bundle patch
+- insert:
+    - id: self-improving
+      name: dsh-self-improving
+      config:
+        dbPath: '~/.dsh/experiences.db'
+        metaCognitionEnabled: true
+        behaviorAdapterEnabled: true
+        minInjectionScore: 0.3

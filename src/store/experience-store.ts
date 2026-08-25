@@ -25,7 +25,14 @@ export class ExperienceStore {
   private db: DatabaseType
 
   constructor(dbPath: string = ':memory:') {
-    this.db = new Database(dbPath)
+    const resolvedPath = dbPath.startsWith('~/')
+      ? dbPath.replace('~/', `${process.env.HOME}/`)
+      : dbPath
+    if (resolvedPath !== ':memory:') {
+      const dir = resolvedPath.replace(/\/[^/]+$/, '')
+      try { require('node:fs').mkdirSync(dir, { recursive: true }) } catch {}
+    }
+    this.db = new Database(resolvedPath)
     this.db.pragma('journal_mode = WAL')
     this.initSchema()
   }
