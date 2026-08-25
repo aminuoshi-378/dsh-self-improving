@@ -58,15 +58,14 @@ pnpm run build
 #    编辑 ~/.dsh/profiles/web/package.json，找到 "dsh-self-improving" 那行，改为：
 #    "dsh-self-improving": "link:/absolute/path/to/dsh-self-improving"
 
-# 3. 删除旧的 lockfile 并重新安装依赖
+# 3. 重新安装依赖（允许更新 lockfile）
 cd ~/.dsh/profiles/web
-rm -f pnpm-lock.yaml
-CI=true pnpm install
+CI=true pnpm install --no-frozen-lockfile
 ```
 
 > ⚠️ link 方式安装的插件不会出现在 WebUI 插件列表（插件列表只显示 tarball 安装的包）。但插件功能正常工作。
 
-> 💡 开发流程：改代码 → `pnpm run build` → `cd ~/.dsh/profiles/web && rm -f pnpm-lock.yaml && CI=true pnpm install` → 重启 dsh web
+> 💡 开发流程：改代码 → `pnpm run build` → `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile` → 重启 dsh web
 
 ### 验证
 
@@ -146,9 +145,9 @@ pnpm run build
 # 2. 修改 ~/.dsh/profiles/web/package.json，改为：
 #    "dsh-rule-enforcement": "link:/absolute/path/to/dsh-self-improving/dsh-rule-enforcement"
 
-# 3. 重新安装依赖
-cd /path/to/deepseek-harness
-CI=true pnpm install
+# 3. 重新安装依赖（允许更新 lockfile）
+cd ~/.dsh/profiles/web
+CI=true pnpm install --no-frozen-lockfile
 ```
 
 ### 安装 WebUI 编辑面板（可选）
@@ -215,8 +214,8 @@ dsh --profile web
 ```
 
 ```bash
-cd /path/to/deepseek-harness
-CI=true pnpm install
+cd ~/.dsh/profiles/web
+CI=true pnpm install --no-frozen-lockfile
 dsh --profile web
 ```
 
@@ -240,7 +239,7 @@ dsh --profile web
 同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下没有同名插件，或者其 `package.json` 没有 `dsh` 字段。
 
 **link 方式改了代码不生效？**
-改完代码后需要重新编译：`pnpm run build`，然后在 profile 目录删 lockfile 重装：`cd ~/.dsh/profiles/web && rm -f pnpm-lock.yaml && CI=true pnpm install`。
+改完代码后需要重新编译：`pnpm run build`，然后在 profile 目录重新安装：`cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`。
 
 ---
 
