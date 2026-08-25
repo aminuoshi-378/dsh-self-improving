@@ -31,6 +31,11 @@
   - `tools/restrict`：基于历史使用模式推荐工具
   - `repeat-tool-reminder` 守卫阈值自适应
 
+### 文档与规划
+- `docs/design.md` 全篇译为中文，与既有中文 README 保持一致
+- `todo.md` 重构：按主题域去重重组，并新增「前置项」，明确任务边界（有 goal 按 goal 聚合 / 无 goal 按多步工具簇 / 纯问答不存储）与存储单元；评审引入分层记忆、冲突裁决、提炼升华方向（对应 P6 建议）
+- 移除 `src/index.ts` 中未使用的 `createHash` import（还原占位残迹，避免提交空 import）
+
 ## [0.1.0] - 2026-08-23
 
 ### 新增
