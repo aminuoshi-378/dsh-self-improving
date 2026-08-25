@@ -27,10 +27,16 @@
 
 ## P1 — 评分准确性
 
-- [ ] **接入 message-feedback 服务**
-  - 当前：web profile 没挂载 message-feedback，用户点赞/踩信号完全丢失
-  - 修复：在 `cordis.patch.yml` 里 insert message-feedback 插件
-  - 或：改用 session 事件扫描 `message_feedback` 相关事件
+- [ ] **用户反馈：用隐式负信号替代主动反馈**
+  - 当前：feedback 永远是 0.5（none），因为 web profile 没挂载 message-feedback，且用户一般不会主动点赞/踩
+  - 现实：没有正反馈是常态，不能依赖用户主动操作
+  - 修复：改用被动观测的隐式信号，只捕获负反馈
+    - 用户追问/纠正：同一个 turn 里 step > 1，用户消息在 agent 回复之后发 → `negative`
+    - 用户中断 agent：session 事件 `turn/end` 的 reason 是 `aborted` → `negative`
+    - 用户重新描述任务：用户下一条消息和上一条高度相似 → `negative`
+    - 没有任何负信号 → `neutral`（0.6，不等于 positive）
+    - 用户主动点赞 → `positive`（1.0，可选锦上添花，需挂载 message-feedback 插件）
+  - 权重：feedback 从 0.2 降到 0.1，让出给 stepEfficiency
 
 - [ ] **接入 goal 服务（web 模式）**
   - 当前：goal 从 `turn/end` reason 判断，但 web 模式下用户可以用 goal 工具
