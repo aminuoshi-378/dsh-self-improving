@@ -17,6 +17,14 @@
   - 公式：步数越少分越高，如 `max(0, 1 - (stepCount - 1) * 0.05)`，3 步=0.9，10 步=0.55
   - 重新分配权重，比如：goalProgress 0.3 + toolSuccess 0.2 + stepEfficiency 0.25 + guard 0.15 + feedback 0.1
 
+- [ ] **区分任务难度，防止简单任务经验覆盖难任务经验**
+  - 当前：简单任务（2 步、工具全成功）score 高，注入时排序靠前，难任务经验被挤掉
+  - 问题根因：步数少 ≠ 经验有价值。简单任务不需要总结经验（"write → bash 就行"），难任务的经验（"异步重试需要处理 Promise rejection"）才值得注入
+  - 存储环节：按步数过滤，步数 <= 2 的简单任务不存储经验（或标记为 `difficulty: low`，注入时降权）
+  - 召回环节：注入时按"信息量"排序而非纯 score 排序——步数多 + 有失败 + 有 lesson 的经验优先于步数少 + 全成功 + 无 lesson 的
+  - 新字段 `difficulty`：low（1-2 步全成功）/ medium（3-6 步）/ high（7+ 步或有过失败）
+  - 注入时 `difficulty: high` 的经验优先，`low` 的只在经验库不足时填充
+
 ## P1 — 评分准确性
 
 - [ ] **接入 message-feedback 服务**
