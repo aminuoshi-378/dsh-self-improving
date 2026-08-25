@@ -13,7 +13,7 @@
 
 ## 前置要求
 
-- Node.js >= 22（`node -v` 检查；`better-sqlite3@12` 提供 Node 22–24 预编译）
+- Node.js >= 22（`node -v` 检查）
 - dsh 已安装并配置好 LLM provider
 
 ---
@@ -24,43 +24,50 @@ agent 每次任务结束后自动评分、存入经验库，下次任务时把�
 
 ### 安装到 dsh
 
+#### 方式一：tarball 安装（懒人专属，一键安装）
+
+适合正式使用。安装后在 WebUI → 设置 → 插件 里可见可管理。
+
 ```bash
-# 1. 克隆本仓库
+# 1. 克隆并构建
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving
-
-# 2. 安装依赖并编译
 pnpm install
 pnpm run build
 
-# 3. 打包成 tarball
+# 2. 打包成 tarball
 pnpm pack    # 生成 dsh-self-improving-0.1.0.tgz
 
-# 4. 安装到 dsh
+# 3. 安装到 dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /绝对路径/dsh-self-improving-0.1.0.tgz
 ```
 
-安装后在 WebUI → 设置 → 插件 里可以看到和管理这个插件。
+> ⚠️ 仓库更新后需要重新 `pnpm run build && pnpm pack` 并重新安装 tarball 才能生效。
 
-**确保 dsh profile 允许原生模块构建。** 在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里，模板行 `better-sqlite3: set this to true or false` 是无效占位符——pnpm 会因此忽略构建脚本，安装报 `ERR_PNPM_IGNORED_BUILDS`。改为：
+#### 方式二：link 安装（便于开发）
 
-```yaml
-allowBuilds:
-  better-sqlite3: true
-```
-
-若原生二进制需要走 npmmirror 镜像（见常见问题），还需在 `~/.dsh/profiles/web/.npmrc`（以及 `deepseek-harness/.npmrc`）里创建：
-```
-better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
-```
-
-然后重新安装：
+适合开发调试。改完代码只需 `pnpm run build` + 重新 install 即可生效，不用每次打包。
 
 ```bash
-dsh plugin --profile web remove dsh-self-improving
-dsh plugin --profile web add /绝对路径/dsh-self-improving-0.1.0.tgz
+# 1. 克隆并构建
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving
+pnpm install
+pnpm run build
+
+# 2. 修改 dsh web profile 的 package.json，把依赖从 tarball 切到 link：
+#    编辑 ~/.dsh/profiles/web/package.json，找到 "dsh-self-improving" 那行，改为：
+#    "dsh-self-improving": "link:/绝对路径/dsh-self-improving"
+
+# 3. 重新安装依赖
+cd /path/to/deepseek-harness
+CI=true pnpm install
 ```
+
+> ⚠️ link 方式安装的插件不会出现在 WebUI 插件列表（插件列表只显示 tarball 安装的包）。但插件功能正常工作。
+
+> 💡 开发流程：改代码 → `pnpm run build` → `CI=true pnpm install`（在 dsh 目录下）→ 重启 dsh web
 
 ### 验证
 
@@ -113,21 +120,36 @@ pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
 
 ### 安装到 dsh
 
+#### 方式一：tarball 安装（懒人专属，一键安装）
+
 ```bash
-# 1. 克隆本仓库
+# 1. 克隆并构建
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving/dsh-rule-enforcement
+pnpm install
+pnpm run build
+pnpm pack    # 生成 dsh-rule-enforcement-0.1.4.tgz
 
-# 2. 安装依赖并编译
+# 2. 安装到 dsh
+cd /path/to/deepseek-harness
+dsh plugin --profile web add /绝对路径/dsh-rule-enforcement-0.1.4.tgz
+```
+
+#### 方式二：link 安装（便于开发）
+
+```bash
+# 1. 克隆并构建
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving/dsh-rule-enforcement
 pnpm install
 pnpm run build
 
-# 3. 打包成 tarball
-pnpm pack    # 生成 dsh-rule-enforcement-0.1.4.tgz
+# 2. 修改 ~/.dsh/profiles/web/package.json，改为：
+#    "dsh-rule-enforcement": "link:/绝对路径/dsh-self-improving/dsh-rule-enforcement"
 
-# 4. 安装到 dsh
+# 3. 重新安装依赖
 cd /path/to/deepseek-harness
-dsh plugin --profile web add /绝对路径/dsh-rule-enforcement-0.1.4.tgz
+CI=true pnpm install
 ```
 
 ### 安装 WebUI 编辑面板（可选）
@@ -171,37 +193,55 @@ pnpm test             # 跑 10 个测试
 
 ## 两个插件一起装
 
+### tarball 方式
+
 ```bash
 cd /path/to/deepseek-harness
-
 dsh plugin --profile web add /绝对路径/dsh-self-improving-0.1.0.tgz
 dsh plugin --profile web add /绝对路径/dsh-rule-enforcement-0.1.4.tgz
-
 dsh --profile web
 ```
 
-两个插件互不干扰，在 WebUI 插件列表里可以独立启用/禁用。
+### link 方式
+
+编辑 `~/.dsh/profiles/web/package.json`：
+
+```json
+{
+  "dependencies": {
+    "dsh-self-improving": "link:/path/to/dsh-self-improving",
+    "dsh-rule-enforcement": "link:/path/to/dsh-self-improving/dsh-rule-enforcement"
+  }
+}
+```
+
+```bash
+cd /path/to/deepseek-harness
+CI=true pnpm install
+dsh --profile web
+```
 
 ---
 
 ## 常见问题
 
-**安装时 `better-sqlite3` 报错（如 `ECONNRESET`、`Request timed out`、`gyp ERR! find VS`）？**
-通常两个原因：
-- `better-sqlite3` 默认从 GitHub 下载预编译二进制，可能无法访问。在 `.npmrc` 里设 `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3` — **host 必须带包名段** `/binary/better-sqlite3`（仅 `/binary` 会拼出错 URL）。同时应用到项目根目录和 dsh 安装上下文（deepseek-harness 和/或 `~/.dsh/profiles/web`），`pnpm install` 才能解析到。
-- `better-sqlite3@12` 之前的版本在当前 Node 下**没有预编译**，会回退到本地 `node-gyp` 编译（需要 VS C++ 工具链）。本项目锁定 `better-sqlite3@^12`，带 Node 22–24 预编译，请保留锁定版本。若 dsh 仓库仍锁 v11，则 dsh 需在 **Node 22** 下运行（v11 有 abi127 预编译）。
+**安装时 `better-sqlite3` 报错？**
+在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，重装。
 
 **插件没出现在 WebUI 插件列表？**
-插件必须通过 `dsh plugin add <tarball>` 安装才会出现在 WebUI 里。workspace 方式（`link:`）不会显示。
+插件必须通过 `dsh plugin add <tarball>` 安装才会出现在 WebUI 里。link 方式不会显示。
 
 **`dbPath` 报目录不存在？**
-插件会自动创建 `~/.dsh/` 目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。
+插件会自动展开 `~` 并创建目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。
 
 **tarball 安装时报 type stripping 错误？**
 打包前必须先 `pnpm run build` 编译 `.ts` → `.js`，确保 `dist/` 目录存在。
 
 **`duplicate loader entry id`？**
 同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下没有同名插件，或者其 `package.json` 没有 `dsh` 字段。
+
+**link 方式改了代码不生效？**
+改完代码后需要重新编译：`pnpm run build`，然后在 dsh 目录重新安装：`CI=true pnpm install`。
 
 ---
 

@@ -1,213 +1,250 @@
 # dsh-ai-enhancements
 
-Two plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh):
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 用的两个插件：
 
-1. **dsh-self-improving** — cross-session learning layer; agents learn from past experience
-2. **dsh-rule-enforcement** — user rule injection; edit a markdown file to control agent behavior
+1. **dsh-self-improving** — 跨会话学习层，agent 从历史经验中学习
+2. **dsh-rule-enforcement** — 用户规则注入，编辑 markdown 文件即可控制 agent 行为
 
-Each plugin works standalone or together with the other.
-
-> 中文: [README.zh-CN.md](README.zh-CN.md)
+两个插件可以单独用，也可以一起用。
 
 ---
 
-## Prerequisites
+## 前置要求
 
-- Node.js >= 22 (check with `node -v`; `better-sqlite3@12` prebuilts cover Node 22–24)
-- dsh installed and configured with an LLM provider
+- Node.js >= 22（`node -v` 检查）
+- dsh 已安装并配置好 LLM provider
 
 ---
 
-## dsh-self-improving — cross-session learning
+## dsh-self-improving — 跨会话学习
 
-The agent scores itself after every task and stores the experience. On the next task it injects the most relevant past experiences for reference.
+agent 每次任务结束后自动评分、存入经验库，下次任务时把相关经验注入给 agent 参考。
 
-### Install into dsh
+### 安装到 dsh
+
+#### 方式一：tarball 安装（懒人专属，一键安装）
+
+适合正式使用。安装后在 WebUI → 设置 → 插件 里可见可管理。
 
 ```bash
-# 1. Clone this repository
+# 1. 克隆并构建
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving
-
-# 2. Install deps and compile
 pnpm install
 pnpm run build
 
-# 3. Pack into a tarball
-pnpm pack    # produces dsh-self-improving-0.1.0.tgz
+# 2. 打包成 tarball
+pnpm pack    # 生成 dsh-self-improving-0.1.0.tgz
 
-# 4. Install into dsh
+# 3. 安装到 dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 ```
 
-After install you can see and manage the plugin under WebUI (Settings → Plugins).
+> ⚠️ 仓库更新后需要重新 `pnpm run build && pnpm pack` 并重新安装 tarball 才能生效。
 
-**Ensure the dsh profile allows native builds.** In `~/.dsh/profiles/web/pnpm-workspace.yaml`, the template line `better-sqlite3: set this to true or false` is an invalid placeholder — pnpm then ignores the build script and install fails with `ERR_PNPM_IGNORED_BUILDS`. Set it to:
+#### 方式二：link 安装（便于开发）
 
-```yaml
-allowBuilds:
-  better-sqlite3: true
-```
-
-If the npmmirror mirror is needed for the native binary (see FAQ), also create `~/.dsh/profiles/web/.npmrc` (and `deepseek-harness/.npmrc`) with:
-```
-better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
-```
-
-Then reinstall:
+适合开发调试。改完代码只需 `pnpm run build` + 重新 install 即可生效，不用每次打包。
 
 ```bash
-dsh plugin --profile web remove dsh-self-improving
-dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+# 1. 克隆并构建
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving
+pnpm install
+pnpm run build
+
+# 2. 修改 dsh web profile 的 package.json，把依赖从 tarball 切到 link：
+#    编辑 ~/.dsh/profiles/web/package.json，找到 "dsh-self-improving" 那行，改为：
+#    "dsh-self-improving": "link:/absolute/path/to/dsh-self-improving"
+
+# 3. 重新安装依赖
+cd /path/to/deepseek-harness
+CI=true pnpm install
 ```
 
-### Verify
+> ⚠️ link 方式安装的插件不会出现在 WebUI 插件列表（插件列表只显示 tarball 安装的包）。但插件功能正常工作。
+
+> 💡 开发流程：改代码 → `pnpm run build` → `CI=true pnpm install`（在 dsh 目录下）→ 重启 dsh web
+
+### 验证
 
 ```bash
 cd /path/to/deepseek-harness
 
-# Run the first task (accumulate experience)
+# 跑第一个任务（积累经验）
 dsh --profile web "create a file called hello.js"
 ```
 
-stderr should output:
+stderr 会输出：
 ```
 [self-improving] plugin loaded
 [self-improving] tool/result — write OK
 [self-improving] turn 1 scored — score=0.78
 ```
 
-Run a second task and you should see experience injection:
+再跑第二个任务，会看到经验注入：
 ```
 [self-improving] injecting 1 past experiences into pre-step (best score 0.78)
 ```
 
-### Configure
+### 配置
 
-The default config works out of the box. To tweak it, override in `~/.dsh/profiles/web/cordis.patch.yml`:
+安装后默认配置已经可用。如需修改，在 `~/.dsh/profiles/web/cordis.patch.yml` 里覆盖：
 
 ```yaml
 - id: self-improving
   config:
-    dbPath: '~/.dsh/experiences.db'    # experience store path; must be a file path to persist across sessions
-    metaCognitionEnabled: true        # whether to reflect (extract lessons learned)
-    behaviorAdapterEnabled: true      # whether to inject past experiences
-    minInjectionScore: 0.3            # only inject experiences scored >= 0.3
+    dbPath: '~/.dsh/experiences.db'    # 经验库路径，必须用文件路径才能跨会话
+    metaCognitionEnabled: true        # 是否开启反思（提取经验教训）
+    behaviorAdapterEnabled: true       # 是否开启经验注入
+    minInjectionScore: 0.3             # 只注入评分 >= 0.3 的经验
 ```
 
-### Local dev tests
+### 本地开发测试
 
 ```bash
 cd dsh-self-improving
-pnpm install          # install deps
-pnpm test             # run 29 unit tests
-pnpm run benchmark    # run a simulated A/B benchmark, producing benchmark-report.html
+pnpm install          # 安装依赖
+pnpm test             # 跑 29 个单元测试
+pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
 ```
 
 ---
 
-## dsh-rule-enforcement — user rule injection
+## dsh-rule-enforcement — 用户规则注入
 
-Edit `~/.dsh/rules.md` to write rules; they are injected into the agent's system prompt automatically. Changes take effect immediately, no restart needed.
+编辑 `~/.dsh/rules.md` 写入规则，规则会自动注入到 agent 的系统提示词中。改了文件立即生效，不用重启。
 
-### Install into dsh
+### 安装到 dsh
+
+#### 方式一：tarball 安装（懒人专属，一键安装）
 
 ```bash
-# 1. Clone this repository
+# 1. 克隆并构建
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving/dsh-rule-enforcement
-
-# 2. Install deps and compile
 pnpm install
 pnpm run build
+pnpm pack    # 生成 dsh-rule-enforcement-0.1.4.tgz
 
-# 3. Pack into a tarball
-pnpm pack    # produces dsh-rule-enforcement-0.1.4.tgz
-
-# 4. Install into dsh
+# 2. 安装到 dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
 ```
 
-### Install the WebUI editing panel (optional)
+#### 方式二：link 安装（便于开发）
+
+```bash
+# 1. 克隆并构建
+git clone https://github.com/aminuoshi-378/dsh-self-improving.git
+cd dsh-self-improving/dsh-rule-enforcement
+pnpm install
+pnpm run build
+
+# 2. 修改 ~/.dsh/profiles/web/package.json，改为：
+#    "dsh-rule-enforcement": "link:/absolute/path/to/dsh-self-improving/dsh-rule-enforcement"
+
+# 3. 重新安装依赖
+cd /path/to/deepseek-harness
+CI=true pnpm install
+```
+
+### 安装 WebUI 编辑面板（可选）
 
 ```bash
 cd dsh-rule-enforcement/src/gui
 pnpm install
 pnpm run build
 pnpm run bundle
-pnpm pack    # produces dsh-rule-enforcement-gui-0.1.3.tgz
+pnpm pack    # 生成 dsh-rule-enforcement-gui-0.1.3.tgz
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
 ```
 
-After install, restart dsh web and edit rules under Settings → Plugins → Rules.
+安装后重启 dsh web，在 设置 → 插件 → Rules 里编辑规则。
 
-### Edit rules
+### 编辑规则
 
-Edit `~/.dsh/rules.md` directly:
+直接编辑文件 `~/.dsh/rules.md`：
 
 ```markdown
-# Project rules
+# 项目规则
 
-- Reply in Chinese when the user asks in Chinese
-- Update the CHANGELOG before committing
-- Write new files in TypeScript
-- Run a security review before git push
+- 用户用中文提问时用中文回复
+- 提交前先更新 CHANGELOG
+- 新文件用 TypeScript
+- git push 之前先进行安全检查
 ```
 
-Or edit through the WebUI. Save and it takes effect on the next agent request.
+或通过 WebUI 编辑。改完保存即可，下次 agent 请求时自动生效。
 
-### Local dev tests
+### 本地开发测试
 
 ```bash
 cd dsh-rule-enforcement
 pnpm install
-pnpm run typecheck    # type check
-pnpm test             # run 10 tests
+pnpm run typecheck    # 类型检查
+pnpm test             # 跑 10 个测试
 ```
 
 ---
 
-## Install both plugins
+## 两个插件一起装
+
+### tarball 方式
 
 ```bash
 cd /path/to/deepseek-harness
-
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
-
 dsh --profile web
 ```
 
-The two plugins do not interfere with each other and can be enabled/disabled independently in the WebUI plugin list.
+### link 方式
+
+编辑 `~/.dsh/profiles/web/package.json`：
+
+```json
+{
+  "dependencies": {
+    "dsh-self-improving": "link:/path/to/dsh-self-improving",
+    "dsh-rule-enforcement": "link:/path/to/dsh-self-improving/dsh-rule-enforcement"
+  }
+}
+```
+
+```bash
+cd /path/to/deepseek-harness
+CI=true pnpm install
+dsh --profile web
+```
 
 ---
 
-## FAQ
+## 常见问题
 
-**`better-sqlite3` build error during install (e.g. `ECONNRESET`, `Request timed out`, `gyp ERR! find VS`)?**
-Usually two causes:
-- `better-sqlite3` fetches its prebuilt binary from GitHub, which may be unreachable. The project ships `.npmrc` pointing `prebuild-install` at the npmmirror mirror. In `.npmrc` set `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3` — **the host must include the package-name segment** `/binary/better-sqlite3` (bare `/binary` composes the wrong URL). Apply it to BOTH your project root and the dsh install context (deepseek-harness and/or `~/.dsh/profiles/web`) so `pnpm install` can resolve it.
-- A pre-v12 `better-sqlite3` has **no prebuilt for the running Node** and falls back to a local `node-gyp` compile (needs VS C++ workload). The project pins `better-sqlite3@^12`, which ships prebuilds for Node 22–24. Keep the pinned version. If the dsh repo still locks v11, run dsh under **Node 22** (abi127 prebuilds exist for v11).
+**安装时 `better-sqlite3` 报错？**
+在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，重装。
 
-**Plugin not showing in the WebUI plugin list?**
-A plugin only appears in the WebUI when installed via `dsh plugin add <tarball>`. A workspace (`link:`) approach will not show it.
+**插件没出现在 WebUI 插件列表？**
+插件必须通过 `dsh plugin add <tarball>` 安装才会出现在 WebUI 里。link 方式不会显示。
 
-**`dbPath` reports the directory does not exist?**
-The plugin creates `~/.dsh/` automatically. If it still fails, run `mkdir -p ~/.dsh` manually.
+**`dbPath` 报目录不存在？**
+插件会自动展开 `~` 并创建目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。
 
-**Type-stripping error when installing a tarball?**
-Run `pnpm run build` first to compile `.ts` → `.js`, and make sure the `dist/` directory exists.
+**tarball 安装时报 type stripping 错误？**
+打包前必须先 `pnpm run build` 编译 `.ts` → `.js`，确保 `dist/` 目录存在。
 
-**`duplicate loader entry id`?**
-The same plugin is loaded twice. Make sure there is no plugin with the same name under the dsh repo's `packages/` directory, or that its `package.json` has no `dsh` field.
+**`duplicate loader entry id`？**
+同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下没有同名插件，或者其 `package.json` 没有 `dsh` 字段。
+
+**link 方式改了代码不生效？**
+改完代码后需要重新编译：`pnpm run build`，然后在 dsh 目录重新安装：`CI=true pnpm install`。
 
 ---
 
-## More docs
+## 更多文档
 
-- [Architecture design](docs/design.md) — four-layer architecture, security boundaries, implementation path
-- [Plugin dev notes](docs/plugin-dev-notes.md) — dsh plugin development practices and pitfalls
-- [Changelog](CHANGELOG.md)
-
+- [架构设计](docs/design.md) — 四层架构详解、安全边界、实施路径
+- [插件开发笔记](docs/plugin-dev-notes.md) — dsh 插件开发实践要点和陷阱
+- [变更日志](CHANGELOG.md)
