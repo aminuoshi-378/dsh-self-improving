@@ -55,10 +55,6 @@
 
 ## P3 — 健壮性
 
-- [ ] **confidence 衰减逻辑生效**
-  - 当前：`incrementReuse` 衰减逻辑在 maintenance 里，但 maintenance 不触发
-  - 修复：把 confidence 衰减移到 `incrementReuse` 调用时直接执行（已在 pre-step 里调）
-
 - [ ] **注入内容截断**
   - 当前：如果经验库积累了大量经验，注入的 markdown 可能很长
   - 修复：注入内容限制最多 3 条经验，每条 lesson 限制 200 字
@@ -67,7 +63,32 @@
   - 当前：1000 条上限的 eviction 逻辑在 store 里，但没被触发过
   - 修复：在 `turn-stopping` 存储经验后检查是否超限
 
-## P4 — 可选增强
+## P4 — 召回策略
+
+- [ ] **两阶段召回：粗筛 + 精筛**
+  - 当前：query 直接用 SQLite 按 outcome_score 排序返回，没有相似度匹配
+  - 修复：
+    - 第一阶段粗筛：按 `context_hash` 精确匹配 + `tools_used` 交集匹配，快速缩小候选集（用 SQL WHERE 完成）
+    - 第二阶段精筛：在候选集内按综合评分排序——`outcome_score × 0.4 + 工具相似度 × 0.3 + 时间近度 × 0.3`
+    - 两阶段都走 SQL，避免全表扫描
+
+- [ ] **筛选范围动态伸缩**
+  - 当前：query 固定返回 limit 条
+  - 修复：根据经验库总量动态调整候选集大小
+    - 经验 < 50 条：全量参与精筛
+    - 经验 50-200 条：粗筛取 top 20，精筛取 top 5
+    - 经验 > 200 条：粗筛取 top 50，精筛取 top 5
+    - 如果粗筛结果质量都高（avg score > 0.8），可以缩小范围；质量低则扩大
+
+- [ ] **结构化信息落库**
+  - 当前：lesson 字段存的是一段文本
+  - 修复：把 LLM 反思的完整 JSON 存入 lesson 字段
+    - 存储格式：`{"what_worked": "...", "what_failed": "...", "what_to_try_differently": "...", "reusable_lesson": "..."}`
+    - 注入时从 JSON 提取 `reusable_lesson` 作为注入文本
+    - 查询时可以按 `what_failed` 等字段做更精细的匹配
+  - 兼容：如果 lesson 字段不是 JSON（旧数据或规则模板），按纯文本处理
+
+## P5 — 可选增强
 
 - [ ] **按任务类型分类经验**
   - 当前：所有经验混在一起，注入时只按工具序列匹配
