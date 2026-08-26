@@ -686,8 +686,10 @@
 - 新增 5 个配置项（均 opt-in，默认关闭，行为不变）：`adaptiveModelEnabled`/`strongModel`/`standardModel`/`adaptiveToolGuardEnabled`/`failedToolDenyThreshold`
 - 新增 11 个测试（`test/adaptive-strategy.test.ts`），测试总数 85→96 ✓
 
-### T4 I4 原子事实 failed-tool-sequence 覆盖 bug [P1] [ ]
-- **发现**（Phase 6-2 调试暴露）：I4 写入 `upsertFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), ...)`，同一 workspace 下 subject+predicate 固定，不同工具序列的 object 互相覆盖，最终只保留最后一条
-- **影响**：J4 的 systemPrompt 注入 effective/failed tool sequence 永远只有 1 条（其余被覆盖）；`detectFactConflicts` 无法检测同一 workspace 下多个失败序列的差异
-- **根因**：原子事实表设计为 `(subject, predicate, object)` 单真值语义，但 failed-tool-sequence 是多值语义（一个 workspace 有多个失败序列），二者冲突
-- **未修复**：Phase 6-2 已改用 `experiences` 表 `failedToolCounts()` 绕过该 bug（统计更直接正确），但原子事实表本身的语义缺陷仍需单独修复（需重新设计 failed-tool-sequence 的键，如 predicate 编码工具序列）
+### T4 I4 原子事实 failed-tool-sequence 覆盖 bug [P1] [x]
+- ~~I4 写入 `upsertFact(subject, 'failed-tool-sequence', ...)` 同一 workspace 下不同工具序列互相覆盖~~ 已修复
+- 新增 `upsertToolSequenceFact()`（`experience-store.ts`）：工具序列哈希编码进 predicate 后缀，每个不同序列成为独立事实，相同序列仍去重
+- index.ts I4 改用 `upsertToolSequenceFact()`；`task-type` 保持 `upsertFact`（单值语义正确）✓
+- J4 注入改用 `startsWith('failed-tool-sequence')`/`startsWith('effective-tool-sequence')` 前缀匹配 ✓
+- 不同序列不再被 `detectFactConflicts` 误判为冲突（predicate 后缀不同）✓
+- 新增 4 个测试（advanced-features 26→30，总测试 96→100）✓

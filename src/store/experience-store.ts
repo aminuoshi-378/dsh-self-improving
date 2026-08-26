@@ -1260,6 +1260,34 @@ export class ExperienceStore {
   }
 
   /**
+   * T4: Store a tool-sequence fact as a MULTI-VALUED fact.
+   *
+   * Unlike `upsertFact` (whose `(subject, predicate)` key is single-valued and
+   * overwrites the object), a workspace has MANY distinct effective/failed tool
+   * sequences. Writing them all to the same `(subject, 'failed-tool-sequence')`
+   * key overwrites earlier sequences — the T4 bug.
+   *
+   * Here the sequence is hashed into the predicate suffix so each distinct
+   * sequence is its own fact. The base predicate (e.g. `failed-tool-sequence`)
+   * stays a recognizable prefix for `queryFacts` filtering via `startsWith`.
+   *
+   * @param subject - workspace subject (already normalized by caller).
+   * @param basePredicate - 'effective-tool-sequence' | 'failed-tool-sequence'.
+   * @param sequence - the tool sequence string (e.g. "write → bash").
+   * @param source - fact source weight tag.
+   */
+  upsertToolSequenceFact(
+    subject: string,
+    basePredicate: 'effective-tool-sequence' | 'failed-tool-sequence',
+    sequence: string,
+    source: string = 'tool-derived',
+  ): string {
+    const seqHash = createHash('sha1').update(sequence).digest('hex').slice(0, 12)
+    // Predicate encodes the sequence hash so each sequence is an independent fact.
+    return this.upsertFact(subject, `${basePredicate}:${seqHash}`, sequence, source)
+  }
+
+  /**
    * A3: Query atomic facts by subject (exact match) or full-text search.
    */
   queryFacts(subject?: string, searchText?: string): AtomicFact[] {

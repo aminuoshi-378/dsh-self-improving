@@ -418,12 +418,14 @@ export function apply(ctx: Context, config: Config): void {
     try {
       const subject = `workspace:${wsDigest ?? 'default'}`
       if (outcomeScore >= 0.7 && toolsUsed.length > 0) {
-        store.upsertFact(subject, 'effective-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
+        // T4: multi-valued fact — each distinct sequence is its own fact
+        store.upsertToolSequenceFact(subject, 'effective-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
       }
       if (outcomeScore <= 0.3 && toolsUsed.length > 0) {
-        store.upsertFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
+        store.upsertToolSequenceFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
       }
       if (taskPattern) {
+        // task-type is single-valued per workspace — upsertFact is correct here
         store.upsertFact(subject, 'task-type', taskPattern, 'model-inferred')
       }
     } catch (err) {
@@ -733,10 +735,12 @@ export function apply(ctx: Context, config: Config): void {
         // J4: Inject atomic facts (effective/failed tool sequences)
         // Note: text() callback has no agent context, so we can't filter by current workspace.
         // Limit to top 3 effective + top 3 failed to avoid flooding the system prompt.
+        // T4: predicate now carries a sequence hash suffix (multi-valued facts), so
+        // match by prefix instead of exact equality.
         try {
           const facts = store.queryFacts()
-          const effective = facts.filter(f => f.predicate === 'effective-tool-sequence').slice(0, 3)
-          const failed = facts.filter(f => f.predicate === 'failed-tool-sequence').slice(0, 3)
+          const effective = facts.filter(f => f.predicate.startsWith('effective-tool-sequence')).slice(0, 3)
+          const failed = facts.filter(f => f.predicate.startsWith('failed-tool-sequence')).slice(0, 3)
           if (effective.length > 0 || failed.length > 0) {
             if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
             for (const f of effective) {

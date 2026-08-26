@@ -528,4 +528,57 @@ test('B2: detectFactConflicts catches cross-spelling conflicts', () => {
   store.close()
 })
 
+// ---------------------------------------------------------------------------
+// T4: Multi-valued tool-sequence facts do not overwrite each other
+// ---------------------------------------------------------------------------
+
+console.log('\n--- T4: Multi-valued Tool-Sequence Facts ---')
+
+test('T4: upsertToolSequenceFact keeps multiple distinct sequences', () => {
+  const store = new ExperienceStore()
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → git')
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → npm')
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → curl')
+
+  const facts = store.queryFacts('ws:app')
+  const failed = facts.filter(f => f.predicate.startsWith('failed-tool-sequence'))
+  assert(failed.length === 3, `should keep 3 distinct failed sequences, got ${failed.length}`)
+  store.close()
+})
+
+test('T4: upsertToolSequenceFact dedupes identical sequences', () => {
+  const store = new ExperienceStore()
+  const id1 = store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → git')
+  const id2 = store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → git')
+  assert(id1 === id2, 'identical sequence should merge to same fact id')
+
+  const facts = store.queryFacts('ws:app')
+  const failed = facts.filter(f => f.predicate.startsWith('failed-tool-sequence'))
+  assert(failed.length === 1, 'identical sequence should be a single fact')
+  store.close()
+})
+
+test('T4: effective and failed sequences are independent', () => {
+  const store = new ExperienceStore()
+  store.upsertToolSequenceFact('ws:app', 'effective-tool-sequence', 'write → bash')
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → git')
+
+  const facts = store.queryFacts('ws:app')
+  const effective = facts.filter(f => f.predicate.startsWith('effective-tool-sequence'))
+  const failed = facts.filter(f => f.predicate.startsWith('failed-tool-sequence'))
+  assert(effective.length === 1, '1 effective sequence')
+  assert(failed.length === 1, '1 failed sequence')
+  store.close()
+})
+
+test('T4: distinct sequences are not detected as conflicts', () => {
+  const store = new ExperienceStore()
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → git')
+  store.upsertToolSequenceFact('ws:app', 'failed-tool-sequence', 'bash → npm')
+
+  const conflicts = store.detectFactConflicts()
+  assert(conflicts.length === 0, 'distinct failed sequences are not conflicts')
+  store.close()
+})
+
 console.log(`\n${passed} passed, ${failed} failed\n`)

@@ -24,10 +24,11 @@
 - 新增 `guardTool()` 纯函数 + `failedToolCounts()`，工具在多个失败经验中出现则 deny，接入 `tools/pre-execute`
 - 新增 5 个 opt-in 配置项（默认关闭），新增 11 个测试（85→96）
 
-#### T4 — 发现 I4 原子事实 failed-tool-sequence 覆盖 bug [P1]
+#### T4 — 修复 I4 原子事实 failed-tool-sequence 覆盖 bug [P1]
 - I4 写入 `upsertFact(subject, 'failed-tool-sequence', ...)` 同一 workspace 下不同工具序列互相覆盖，只保留最后一条
-- 影响 J4 注入（永远只有 1 条）+ 冲突检测（无法检测多序列差异）
-- 根因：原子事实表单真值语义 vs failed-tool-sequence 多值语义冲突，待单独修复
+- 新增 `upsertToolSequenceFact()`：序列哈希编码进 predicate 后缀，每个序列独立、相同序列去重
+- J4 注入改用 `startsWith` 前缀匹配；`task-type` 保持单值 upsertFact
+- 新增 4 个测试（advanced-features 26→30，总测试 96→100）
 
 ### 修复 — S1-S3 第十一轮代码审查修复（2026-08-26）
 
