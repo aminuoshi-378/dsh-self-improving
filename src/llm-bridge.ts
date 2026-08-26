@@ -46,18 +46,29 @@ export async function tryLLMComplete(
         content: [{ type: 'text' as const, text: prompt }],
         source: { kind: 'plugin' as const, plugin: 'self-improving' },
       }
+      let sawChunk = false
+      let chunkTypes = new Set<string>()
+      let finishReason = ''
       for await (const chunk of llm.stream({
         provider: model.provider,
         model: model.model,
         messages: [message],
         signal: controller.signal,
       })) {
+        sawChunk = true
+        if (chunk?.type) chunkTypes.add(chunk.type)
         if (chunk?.type === 'text-delta' && chunk.text) {
+          chunks.push(chunk.text)
+        } else if (chunk?.type === 'reasoning-delta' && chunk.text) {
           chunks.push(chunk.text)
         } else if (typeof chunk === 'string') {
           chunks.push(chunk)
+        } else if (chunk?.type === 'finish') {
+          finishReason = JSON.stringify(chunk.reason ?? '')
         }
       }
+      // W5: diagnostic — what did the stream actually yield?
+      process.stderr.write(`[self-improving] tryLLMComplete stream: sawChunk=${sawChunk} types=[${[...chunkTypes].join(',')}] textLen=${chunks.join('').length} finish=${finishReason}\n`)
       return chunks.length > 0 ? chunks.join('') : null
     } finally {
       clearTimeout(timeout)
