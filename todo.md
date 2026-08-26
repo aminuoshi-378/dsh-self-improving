@@ -328,3 +328,44 @@
 ### I8 index.ts 模块化拆分 [P3] [ ]
 - index.ts 从 1424 行减到 ~1000 行（I1 删了 ~457 行内联 store），仍超 300 行
 - 拆分优先级低，当前功能已全部接通，后续按需拆
+
+---
+
+## 域 J — 第二轮架构评审（2026-08-26）
+
+> 焦点：功能是否真正闭环、数据是否真正流通，不再关注代码风格。
+
+### J1 pre-step 初始化缺少 taskUnitId/goalId [P0] [ ]
+- **问题**：pre-step 的 `agentTools.set` else 分支（`index.ts:765-767`）缺少 `taskUnitId` 和 `goalId` 字段。如果 pre-step 先于 tools/result 触发（agent 没有工具调用就进入 pre-step），turn-stopping 中 `entry.taskUnitId` 为 `undefined`，导致 `store.store()` 写入空 taskUnitId
+- **影响**：P-C 任务单元聚合在 pre-step 先触发场景下失效，跨 turn 聚合断裂
+- **改进**：pre-step else 分支复用 tools/result 中的 task unit 解析逻辑（`agentTaskUnits` Map 查找/创建）
+
+### J2 B2 冲突检测未在运行时调用 [P1] [ ]
+- **问题**：`detectFactConflicts()` 和 `evictFact()` 已实现，但 turn-stopping 和 run-maintenance 从未调用 `detectFactConflicts()`。I4 写入原子事实后，冲突不会被检测
+- **影响**：同一 workspace 的工具序列从"webpack"变为"vite"时，旧事实不会被标记 evicted，B2 冲突裁决在运行时无效果
+- **改进**：run-maintenance 中 I4 事实写入之后，调用 `detectFactConflicts()`，对低来源权重的冲突事实调 `evictFact()`
+
+### J3 导入/导出缺少 source/contentHash 字段 [P1] [ ]
+- **问题**：`ExportedExperience` 类型和 `exportAll()`/`exportByTaskPattern()` 的映射不包含 `source` 和 `contentHash` 字段。导入端也不校验这两个字段
+- **影响**：导出 JSON 丢失来源权重信息，换机器导入后 B1 来源排序失效；content_hash 丢失导致导入后去重 fallback 到 context_hash
+- **改进**：`ExportedExperience` 加 `source` 和 `contentHash` 字段；`exportAll`/`exportByTaskPattern` 映射补上；`isValidImportedExperience` 校验加 `source`
+
+### J4 原子事实注入未接入 systemPrompt [P1] [ ]
+- **问题**：I4 在 turn-stopping 中写入 `atomic_facts` 表（effective/failed tool sequence、task-type），但 `queryFacts()` 从未在 pre-step 或 systemPrompt.section 中被调用。事实写入了但不会注入给 agent
+- **影响**：原子事实对 agent 不可见，agent 看不到"该项目有效/失败的工具序列"
+- **改进**：systemPrompt.section 的 `text()` 中加入 `store.queryFacts(subject)` 的内容，注入当前 workspace 的原子事实
+
+### J5 preferences.md 读写无并发保护 [P2] [ ]
+- **问题**：`appendPreference`（turn-stopping 中调用）和 `distillPreferencesWithLLM`（run-maintenance 中调用）都读写 `~/.dsh/preferences.md`。如果两者并发执行（turn-stopping 写入时 run-maintenance 正在 LLM 提炼后写回），后者会覆盖前者的写入
+- **影响**：低概率丢偏好，但一旦发生用户显式声明的偏好被 LLM 自动提炼覆盖
+- **改进**：写文件时加文件锁（`flock` 或 write-then-rename 原子写入）
+
+### J6 run-maintenance 中 LLM 调用无超时保护 [P2] [ ]
+- **问题**：`tryLLMComplete` 调用 `ctx.llm.stream()` 时没有超时。如果 LLM 响应慢或卡住，run-maintenance 会无限等待，阻塞后续 lesson 合并和偏好提炼
+- **影响**：maintenance 阶段被单个慢 LLM 调用阻塞，所有后续反思和合并延迟
+- **改进**：`tryLLMComplete` 加 `AbortSignal.timeout(30000)` 或 `Promise.race` 超时机制
+
+### J7 I6 boost confidence 逻辑未区分"注入过的"和"相似的" [P2] [ ]
+- **问题**：I6 在 run-maintenance 中对 `outcomeScore >= 0.7` 的经验 boost 所有相似经验（`store.query({ toolsUsed, limit: 5, minScore: 0.6 })`）。但这些相似经验不一定是上轮被注入的——只是工具序列相似
+- **影响**：boost 了从未被注入过的经验，confidence 膨胀不精确
+- **改进**：在 `agentTools` 或 `pendingReflections` 中记录上轮被注入的 experience id，只 boost 确实被注入过的经验。或复用 `incrementReuse` 时标记的 `last_injected_at` 判断
