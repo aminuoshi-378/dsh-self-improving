@@ -108,6 +108,30 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_experiences_goal ON experiences(goal_id);
       CREATE INDEX IF NOT EXISTS idx_experiences_content_hash ON experiences(content_hash);
     `)
+
+    // A3: FTS5 full-text index on lesson and actions for BM25 search
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
+        lesson, actions, content='experiences', content_rowid='rowid'
+      );
+    `)
+    // Triggers to keep FTS5 in sync with the experiences table
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS experiences_ai AFTER INSERT ON experiences BEGIN
+        INSERT INTO experiences_fts(rowid, lesson, actions)
+        VALUES (new.rowid, COALESCE(new.lesson, ''), new.actions);
+      END;
+      CREATE TRIGGER IF NOT EXISTS experiences_ad AFTER DELETE ON experiences BEGIN
+        INSERT INTO experiences_fts(experiences_fts, rowid, lesson, actions)
+        VALUES ('delete', old.rowid, COALESCE(old.lesson, ''), old.actions);
+      END;
+      CREATE TRIGGER IF NOT EXISTS experiences_au AFTER UPDATE ON experiences BEGIN
+        INSERT INTO experiences_fts(experiences_fts, rowid, lesson, actions)
+        VALUES ('delete', old.rowid, COALESCE(old.lesson, ''), old.actions);
+        INSERT INTO experiences_fts(rowid, lesson, actions)
+        VALUES (new.rowid, COALESCE(new.lesson, ''), new.actions);
+      END;
+    `)
   }
 
   /** Add a column to the experiences table if it doesn't already exist (migration support). */
@@ -283,19 +307,58 @@ export class ExperienceStore {
       coarseLimit = 50
     }
 
-    // Stage 1: Coarse filter via SQL
-    let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
-    const params: Record<string, unknown> = { minScore }
+    // Stage 1: Coarse filter
+    let rows: RawExperienceRow[]
 
-    if (query.taskPattern) {
-      sql += ` AND (task_pattern = @taskPattern OR task_pattern IS NULL)`
-      params.taskPattern = query.taskPattern
+    if (query.searchText) {
+      // A3: FTS5 + BM25 search — match keywords in lesson/actions, order by relevance
+      try {
+        // FTS5 MATCH query: escape special chars by wrapping each term in quotes
+        const safeQuery = query.searchText
+          .split(/[\s,]+/)
+          .filter((t) => t.length > 0)
+          .map((t) => `"${t.replace(/"/g, '""')}"`)
+          .join(' ')
+        if (safeQuery) {
+          const ftsRows = this.db.prepare(`
+            SELECT e.* FROM experiences e
+            JOIN experiences_fts f ON e.rowid = f.rowid
+            WHERE experiences_fts MATCH @matchText
+              AND e.outcome_score >= @minScore
+              AND e.merged = 0
+            ORDER BY bm25(experiences_fts) ASC
+            LIMIT @fetchLimit
+          `).all({ matchText: safeQuery, minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
+          rows = ftsRows
+        } else {
+          rows = this.db.prepare(`
+            SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0
+            ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit
+          `).all({ minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
+        }
+      } catch {
+        // FTS5 not available or query syntax error — fall back to SQL filter
+        rows = this.db.prepare(`
+          SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0
+          ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit
+        `).all({ minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
+      }
+    } else {
+      // Standard coarse filter via SQL
+      let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
+      const params: Record<string, unknown> = { minScore }
+
+      if (query.taskPattern) {
+        sql += ` AND (task_pattern = @taskPattern OR task_pattern IS NULL)`
+        params.taskPattern = query.taskPattern
+      }
+
+      sql += ` ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit`
+      params.fetchLimit = coarseLimit
+
+      rows = this.db.prepare(sql).all(params) as RawExperienceRow[]
     }
 
-    sql += ` ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit`
-    params.fetchLimit = coarseLimit
-
-    const rows = this.db.prepare(sql).all(params) as RawExperienceRow[]
     const records = rows.map((r) => this.rowToRecord(r))
 
     // P0: Deduplicate by context_hash — keep only the newest for each

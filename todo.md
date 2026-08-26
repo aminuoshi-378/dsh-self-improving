@@ -97,10 +97,10 @@
 
 ### A3 底层：原子事实 + 双索引检索 [P4, P6.1] [~]
 - 结构化存储具体事实（如"项目 X 的部署命令是 Y"），永不过期 — **未实现**：无独立原子事实表
-- **两阶段召回**：已实现粗筛（SQL filter by score + task_pattern + merged）+ 精筛（`compositeRank`: score×0.4 + 工具相似度×0.3 + 时间近度×0.3），见 `experience-store.ts:243-299`
-  - 粗筛用 SQL WHERE，但 **未用 BM25（SQLite FTS5）**——对 lesson/actions 建 FTS 未实现
+- **两阶段召回**：已实现粗筛 + 精筛（`experience-store.ts` query 方法）
+  - **A3 FTS5 + BM25 已实现**：对 lesson/actions 建全文索引（`experiences_fts` 虚拟表），触发器自动同步；有 `searchText` 时用 BM25 相关性排序粗筛，无则按 score 降序 ✓
   - **E2 content_hash 去重已实现**：`computeContentHash()` 对有序工具序列含成败做 sha1，去重优先用 `content_hash`，无值时 fallback 到 `context_hash` ✓
-  - 精筛综合评分已实现
+  - 精筛综合评分已实现：`outcome_score × 0.4 + 工具相似度 × 0.3 + 时间近度 × 0.3` ✓
   - 两阶段都走 SQL，避免全表扫描 ✓
 
 ### A4 分代淘汰策略（TTL / 遗忘的具体实现）[P3] [x]

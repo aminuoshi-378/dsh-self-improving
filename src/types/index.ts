@@ -115,6 +115,7 @@ export interface ExperienceQuery {
   workspaceDigest?: string
   limit?: number
   minScore?: number
+  searchText?: string // A3: FTS5 full-text search keyword for lesson/actions
 }
 
 /**
