@@ -277,3 +277,54 @@
 - 若未来引入记忆事件流（如写入/驱逐触发其他插件），使用独立标记 `memory:write` / `memory:evict`
 - 消费隔离约束：记忆构建只消费"用户交互事件流"，不消费"自身记忆事件流" ✓
 - 当前无需显式标记（无记忆事件流）✓
+
+---
+
+## 域 I — 架构改进（2026-08-26 评审）
+
+> 目标：让已实现的功能在运行时真正生效，补通数据管道，让学习闭环变成双向的。
+
+### I1 删掉 index.ts 内联 ExperienceStore，改为 import 独立版 [P0] [x]
+- ~~index.ts 内联了一份简化版 ExperienceStore（~500 行），和独立版重复实现~~ 已删除
+- 删掉内联 ExperienceStore 类（~457 行），改为 `import { ExperienceStore } from './store/experience-store.js'`
+- 统一 query 调用为对象参数（`store.query({ ... })`），统一 store 调用为 `store.store(outcome, context)` 签名 ✓
+- `difficultyPriority` 改为内联函数（独立版是 private）✓
+- index.ts 从 1424 行减到 ~1000 行 ✓
+
+### I2 run-maintenance 中 lesson 生成接通 LLM [P0] [x]
+- ~~运行时只走 rule-based，LLM lesson 生成没接通~~ 已接通
+- `run-maintenance` 中先用 `tryLLMComplete(buildLessonPrompt(entry))` 生成 lesson，解析 JSON 失败再 fallback 到 `generateStructuredReflection` ✓
+- `buildLessonPrompt()` 函数：从 actions JSON 提取工具名/失败工具/步数/难度，构造 LLM prompt ✓
+- LLM 不可用时自动 fallback，标注日志来源（LLM/rule-based）✓
+
+### I3 pre-step query 传 searchText [P1] [x]
+- ~~pre-step 的 query 调用没传 searchText，FTS5 检索在运行时不会被触发~~ 已接通
+- pre-step 中从当前用户消息提取 `searchText`（msgText 前 100 字符），传入 query ✓
+- 现在注入时按 BM25 语义相关性召回，而非纯 score 降序 ✓
+
+### I4 turn-stopping 中提取原子事实写入 atomic_facts [P1] [x]
+- ~~turn-stopping 从未调用 upsertFact，表是空的~~ 已接通
+- turn-stopping 中根据 outcome_score 提取事实写入：
+  - score ≥ 0.7 → `upsertFact(subject, 'effective-tool-sequence', tools, 'tool-derived')`
+  - score ≤ 0.3 → `upsertFact(subject, 'failed-tool-sequence', tools, 'tool-derived')`
+  - 有 taskPattern → `upsertFact(subject, 'task-type', taskPattern, 'model-inferred')` ✓
+- B1/B2 在运行时现在有数据可用 ✓
+
+### I5 experiences 表 store() 接受 source 参数 [P1] [x]
+- ~~store() 不接受 source 参数，所有经验写入时都是默认值~~ 已接通
+- `store()` context 参数加 `source?: string` ✓
+- turn-stopping 中根据反馈来源赋值：`positive → 'user-confirmed'`，`implicitNegative → 'tool-derived'`，其他 → `'model-inferred'` ✓
+- `ExperienceRecord` 类型加 `source` 字段 ✓
+
+### I6 注入反馈闭环：高 score 时 boost 被注入经验 confidence [P2] [x]
+- ~~缺少"注入的经验是否有帮助"的反馈~~ 已实现
+- run-maintenance 中 outcome_score ≥ 0.7 时，query 相似经验并 `boostConfidence` ✓
+- 好经验被注入后会通过新轮的高分反馈被 boost，经验库越用越准 ✓
+
+### I7 删掉三个独立类死代码 [P2] [ ]
+- **保留**：`BehaviorAdapter`、`OutcomeEvaluator`、`MetaCognitionEngine` 三个独立类被测试文件和 benchmark 引用，不能直接删
+- 注：index.ts 已不再内联重复实现这些类的逻辑，运行时统一用 index.ts 内联的函数 + 独立版 ExperienceStore
+
+### I8 index.ts 模块化拆分 [P3] [ ]
+- index.ts 从 1424 行减到 ~1000 行（I1 删了 ~457 行内联 store），仍超 300 行
+- 拆分优先级低，当前功能已全部接通，后续按需拆

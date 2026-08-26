@@ -198,10 +198,12 @@ export class ExperienceStore {
     actions: string
     taskUnitId?: string
     goalId?: string | null
+    source?: string
     tags?: string[]
   }): string {
     const id = ulid()
     const taskUnitId = context.taskUnitId ?? id
+    const source = context.source ?? 'model-inferred'
     const contextHash = this.computeContextHash(
       context.taskPattern,
       context.toolsUsed,
@@ -217,14 +219,14 @@ export class ExperienceStore {
         context_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
         difficulty, generation, last_injected_at, merged,
-        tags, confidence, reuse_count, content_hash
+        tags, confidence, reuse_count, content_hash, source
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
         @taskUnitId, @goalId,
         @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
         @difficulty, @generation, @lastInjectedAt, @merged,
-        @tags, @confidence, @reuseCount, @contentHash
+        @tags, @confidence, @reuseCount, @contentHash, @source
       )
     `)
 
@@ -251,6 +253,7 @@ export class ExperienceStore {
       confidence: 1.0,
       reuseCount: 0,
       contentHash,
+      source,
     })
 
     // Enforce retention limit

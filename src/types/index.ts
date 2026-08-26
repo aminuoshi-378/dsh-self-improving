@@ -104,6 +104,7 @@ export interface ExperienceRecord {
   tags: string[] | null
   confidence: number
   reuseCount: number
+  source: string // B1: 'user-confirmed' | 'tool-derived' | 'model-inferred' | 'chat-mention'
 }
 
 /**

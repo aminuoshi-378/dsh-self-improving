@@ -17,10 +17,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
 import { ulid } from 'ulid'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern } from './types/index.js'
+import { ExperienceStore } from './store/experience-store.js'
+import type { ExperienceRecord, TurnOutcome } from './types/index.js'
 
 export const name = 'self-improving'
 
@@ -54,463 +54,6 @@ export function rulesSchema() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Experience Store (Layer 3) — inlined for single-file plugin
-// ---------------------------------------------------------------------------
-
-interface ExperienceRecord {
-  id: string
-  sessionId: string
-  turnId: string
-  createdAt: number
-  contextHash: string
-  taskPattern: string | null
-  toolsUsed: string[] | null
-  workspaceDigest: string | null
-  actions: string
-  outcomeScore: number
-  userFeedback: string
-  lesson: string | null
-  difficulty: 'low' | 'medium' | 'high'
-  generation: number
-  lastInjectedAt: number | null
-  merged: boolean
-  confidence: number
-  reuseCount: number
-}
-
-class ExperienceStore {
-  private db: DatabaseType
-
-  constructor(dbPath: string = ':memory:') {
-    // Expand ~ to home directory
-    const resolvedPath = dbPath.startsWith('~/')
-      ? dbPath.replace('~/', `${process.env.HOME}/`)
-      : dbPath
-    // Ensure parent dir exists for file-based db
-    if (resolvedPath !== ':memory:') {
-      const dir = resolvedPath.replace(/\/[^/]+$/, '')
-      try { require('node:fs').mkdirSync(dir, { recursive: true }) } catch {}
-    }
-    this.db = new Database(resolvedPath)
-    this.db.pragma('journal_mode = WAL')
-    this.initSchema()
-  }
-
-  private initSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS experiences (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        task_unit_id TEXT NOT NULL DEFAULT '',
-        goal_id TEXT,
-        context_hash TEXT NOT NULL,
-        content_hash TEXT,
-        task_pattern TEXT,
-        tools_used TEXT,
-        workspace_digest TEXT,
-        actions TEXT NOT NULL,
-        outcome_score REAL,
-        user_feedback TEXT,
-        lesson TEXT,
-        difficulty TEXT DEFAULT 'medium',
-        generation INTEGER DEFAULT 0,
-        last_injected_at INTEGER,
-        merged INTEGER DEFAULT 0,
-        confidence REAL DEFAULT 1.0,
-        reuse_count INTEGER DEFAULT 0
-      );
-    `)
-
-    // Migration: add columns that may not exist in older databases
-    this.ensureColumn('difficulty', "TEXT DEFAULT 'medium'")
-    this.ensureColumn('generation', 'INTEGER DEFAULT 0')
-    this.ensureColumn('last_injected_at', 'INTEGER')
-    this.ensureColumn('merged', 'INTEGER DEFAULT 0')
-    this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
-    this.ensureColumn('goal_id', 'TEXT')
-    this.ensureColumn('content_hash', 'TEXT')
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_exp_context ON experiences(context_hash);
-      CREATE INDEX IF NOT EXISTS idx_exp_task ON experiences(task_pattern);
-      CREATE INDEX IF NOT EXISTS idx_exp_score ON experiences(outcome_score DESC);
-      CREATE INDEX IF NOT EXISTS idx_exp_difficulty ON experiences(difficulty);
-      CREATE INDEX IF NOT EXISTS idx_exp_generation ON experiences(generation);
-      CREATE INDEX IF NOT EXISTS idx_exp_merged ON experiences(merged);
-      CREATE INDEX IF NOT EXISTS idx_exp_content_hash ON experiences(content_hash);
-    `)
-  }
-
-  /** Add a column to the experiences table if it doesn't already exist (migration support). */
-  private ensureColumn(columnName: string, definition: string): void {
-    const cols = this.db.prepare('PRAGMA table_info(experiences)').all() as { name: string }[]
-    if (!cols.some((c) => c.name === columnName)) {
-      this.db.exec(`ALTER TABLE experiences ADD COLUMN ${columnName} ${definition}`)
-    }
-  }
-
-  store(
-    sessionId: string,
-    turnId: string,
-    outcomeScore: number,
-    userFeedback: string,
-    toolsUsed: string[],
-    actions: string,
-    workspaceDigest: string | null,
-    difficulty: 'low' | 'medium' | 'high' = 'medium',
-    taskPattern: string | null = null,
-    taskUnitId?: string,
-    goalId?: string | null,
-  ): string {
-    const id = ulid()
-    const taskUnit = taskUnitId ?? id
-    const contextHash = [taskPattern ?? '', toolsUsed.slice().sort().join(','), workspaceDigest ?? ''].join('|')
-    // E2: content_hash — sha1 of ordered tool call sequence (with success/failure) + workspace
-    let contentHash: string | null = null
-    try {
-      const crypto = require('node:crypto')
-      const parsed = JSON.parse(actions)
-      const tools = (parsed.tools ?? []) as { name: string; success: boolean }[]
-      if (Array.isArray(tools) && tools.length > 0) {
-        const toolStr = tools.map((t) => `${t.name}:${t.success}`).join(',')
-        contentHash = crypto.createHash('sha1').update(`${toolStr}|${workspaceDigest ?? ''}`).digest('hex').slice(0, 16)
-      }
-    } catch { contentHash = null }
-
-    this.db.prepare(`
-      INSERT INTO experiences (id, session_id, turn_id, created_at, task_unit_id, goal_id,
-        context_hash, content_hash, task_pattern, tools_used, workspace_digest, actions, outcome_score,
-        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
-        confidence, reuse_count)
-      VALUES (@id, @sessionId, @turnId, @createdAt, @taskUnit, @goalId,
-        @contextHash, @contentHash, @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
-        @difficulty, 0, NULL, 0, 1.0, 0)
-    `).run({
-      id, sessionId, turnId, createdAt: Date.now(),
-      taskUnit, goalId: goalId ?? null,
-      contextHash, contentHash, taskPattern, toolsUsed: JSON.stringify(toolsUsed),
-      ws: workspaceDigest, actions, score: outcomeScore, feedback: userFeedback,
-      difficulty,
-    })
-
-    // Enforce retention limit of 1000
-    const count = this.count()
-    if (count > 1000) {
-      this.db.prepare(`
-        DELETE FROM experiences WHERE id IN (
-          SELECT id FROM experiences ORDER BY outcome_score ASC, created_at ASC LIMIT ?
-        )
-      `).run(count - 1000)
-    }
-
-    return id
-  }
-
-  query(toolsUsed: string[], workspaceDigest: string | null, limit: number = 5, minScore: number = 0.0): ExperienceRecord[] {
-    const totalCount = this.count()
-    // P4: Dynamic candidate set sizing
-    const coarseLimit = totalCount < 50 ? Math.max(limit * 5, 50) : totalCount < 200 ? 20 : 50
-
-    // Stage 1: Coarse filter (P4) — exclude merged records
-    const rows = this.db.prepare(`
-      SELECT * FROM experiences WHERE outcome_score >= ? AND merged = 0
-      ORDER BY outcome_score DESC, created_at DESC LIMIT ?
-    `).all(minScore, coarseLimit) as any[]
-
-    const records = rows.map(r => this.rowToRecord(r))
-
-    // P0: Deduplicate by context_hash — keep only the newest
-    const deduped = this.deduplicateByContextHash(records)
-
-    if (toolsUsed.length === 0 && !workspaceDigest) {
-      // P0: Sort by difficulty priority then score
-      return deduped
-        .sort((a, b) => {
-          const dp = this.difficultyPriority(b.difficulty) - this.difficultyPriority(a.difficulty)
-          return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
-        })
-        .slice(0, limit)
-    }
-
-    // Stage 2: Fine re-rank by composite score (P4)
-    // outcome_score * 0.4 + tools_similarity * 0.3 + recency * 0.3
-    return deduped
-      .map(rec => ({
-        rec,
-        rank: rec.outcomeScore * 0.4 + this.similarity(rec, toolsUsed, workspaceDigest) * 0.3
-          + Math.exp(-(Date.now() - rec.createdAt) / (30 * 24 * 60 * 60 * 1000)) * 0.3,
-      }))
-      .sort((a, b) => b.rank - a.rank)
-      .slice(0, limit)
-      .map(item => item.rec)
-  }
-
-  /** P0: Deduplicate by context_hash, keeping the newest for each */
-  private deduplicateByContextHash(records: ExperienceRecord[]): ExperienceRecord[] {
-    const seen = new Map<string, ExperienceRecord>()
-    for (const rec of records) {
-      const existing = seen.get(rec.contextHash)
-      if (!existing || rec.createdAt > existing.createdAt) {
-        seen.set(rec.contextHash, rec)
-      }
-    }
-    return [...seen.values()]
-  }
-
-  /** P0: Difficulty priority for injection ordering */
-  difficultyPriority(difficulty: string): number {
-    switch (difficulty) {
-      case 'high': return 3
-      case 'medium': return 2
-      case 'low': return 1
-      default: return 2
-    }
-  }
-
-  /** P4: Update lesson with structured Reflection (stored as JSON) */
-  updateLesson(id: string, reflection: {
-    whatWorked: string
-    whatFailed: string
-    whatToTryDifferently: string
-    reusableLesson: string
-  }): void {
-    this.db.prepare('UPDATE experiences SET lesson = ? WHERE id = ?')
-      .run(JSON.stringify(reflection), id)
-  }
-
-  incrementReuse(id: string): void {
-    this.db.prepare(`
-      UPDATE experiences SET reuse_count = reuse_count + 1,
-        confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1),
-        last_injected_at = ? WHERE id = ?
-    `).run(Date.now(), id)
-  }
-
-  boostConfidence(id: string): void {
-    this.db.prepare('UPDATE experiences SET confidence = MIN(1.0, confidence + 0.2) WHERE id = ?').run(id)
-  }
-
-  count(): number {
-    return (this.db.prepare('SELECT COUNT(*) as c FROM experiences').get() as any).c
-  }
-
-  stats(): {
-    total: number; avgScore: number; positive: number; withLessons: number
-    youngGenCount: number; oldGenCount: number; highDifficultyCount: number; mergedCount: number
-  } {
-    const r = this.db.prepare(`
-      SELECT COUNT(*) as total, COALESCE(AVG(outcome_score), 0) as avgScore,
-        SUM(CASE WHEN user_feedback = 'positive' THEN 1 ELSE 0 END) as positive,
-        SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons,
-        SUM(CASE WHEN generation = 0 THEN 1 ELSE 0 END) as youngGenCount,
-        SUM(CASE WHEN generation = 1 THEN 1 ELSE 0 END) as oldGenCount,
-        SUM(CASE WHEN difficulty = 'high' THEN 1 ELSE 0 END) as highDifficultyCount,
-        SUM(CASE WHEN merged = 1 THEN 1 ELSE 0 END) as mergedCount
-      FROM experiences
-    `).get() as any
-    return {
-      total: r.total, avgScore: r.avgScore, positive: r.positive ?? 0, withLessons: r.withLessons ?? 0,
-      youngGenCount: r.youngGenCount ?? 0, oldGenCount: r.oldGenCount ?? 0,
-      highDifficultyCount: r.highDifficultyCount ?? 0, mergedCount: r.mergedCount ?? 0,
-    }
-  }
-
-  private similarity(rec: ExperienceRecord, tools: string[], ws: string | null): number {
-    let score = 0, weight = 0
-    if (rec.toolsUsed && tools.length > 0) {
-      weight += 0.6
-      const qs = new Set(tools), rs = new Set(rec.toolsUsed)
-      const inter = [...qs].filter(t => rs.has(t)).length
-      const union = new Set([...qs, ...rs]).size
-      score += 0.6 * (union > 0 ? inter / union : 0)
-    }
-    if (ws && rec.workspaceDigest && rec.workspaceDigest === ws) { weight += 0.4; score += 0.4 }
-    return weight > 0 ? score / weight : 0.5
-  }
-
-  private rowToRecord(r: any): ExperienceRecord {
-    return {
-      id: r.id, sessionId: r.session_id, turnId: r.turn_id, createdAt: r.created_at,
-      contextHash: r.context_hash, taskPattern: r.task_pattern,
-      toolsUsed: r.tools_used ? JSON.parse(r.tools_used) : null,
-      workspaceDigest: r.workspace_digest, actions: r.actions,
-      outcomeScore: r.outcome_score, userFeedback: r.user_feedback,
-      lesson: r.lesson, difficulty: r.difficulty ?? 'medium',
-      generation: r.generation ?? 0, lastInjectedAt: r.last_injected_at ?? null,
-      merged: Boolean(r.merged),
-      confidence: r.confidence, reuseCount: r.reuse_count,
-    }
-  }
-
-  /** P2: Get unmerged lesson groups for consolidation */
-  getUnmergedLessonGroups(threshold: number = 20): {
-    difficulty: string
-    toolsKey: string
-    records: ExperienceRecord[]
-  }[] {
-    const unmergedCount = (this.db.prepare(
-      `SELECT COUNT(*) as c FROM experiences WHERE lesson IS NOT NULL AND merged = 0`,
-    ).get() as any).c
-
-    if (unmergedCount < threshold) return []
-
-    const rows = this.db.prepare(`
-      SELECT * FROM experiences
-      WHERE lesson IS NOT NULL AND merged = 0
-      ORDER BY difficulty DESC, created_at DESC
-    `).all() as any[]
-
-    const records = rows.map(r => this.rowToRecord(r))
-
-    const groups = new Map<string, ExperienceRecord[]>()
-    for (const rec of records) {
-      const toolsKey = rec.toolsUsed ? [...rec.toolsUsed].sort().join(',') : 'none'
-      const key = `${rec.difficulty}|${toolsKey}`
-      const group = groups.get(key) ?? []
-      group.push(rec)
-      groups.set(key, group)
-    }
-
-    return [...groups.entries()]
-      .filter(([, recs]) => recs.length >= 2)
-      .map(([key, recs]) => {
-        const [difficulty, toolsKey] = key.split('|')
-        return { difficulty, toolsKey, records: recs }
-      })
-  }
-
-  /** P2: Merge lessons into a consolidated record */
-  mergeLessons(
-    sourceIds: string[],
-    mergedLesson: {
-      whatWorked: string
-      whatFailed: string
-      whatToTryDifferently: string
-      reusableLesson: string
-    },
-    difficulty: 'low' | 'medium' | 'high',
-    toolsUsed: string[],
-  ): string {
-    const id = ulid()
-    const contextHash = toolsUsed.slice().sort().join(',')
-
-    this.db.prepare(`
-      INSERT INTO experiences (id, session_id, turn_id, created_at, context_hash,
-        task_pattern, tools_used, workspace_digest, actions, outcome_score,
-        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
-        confidence, reuse_count)
-      VALUES (@id, @sessionId, @turnId, @createdAt, @contextHash,
-        NULL, @toolsUsed, NULL, @actions, 0.85, 'none',
-        @lesson, @difficulty, 1, NULL, 0, 1.0, 0)
-    `).run({
-      id, sessionId: 'merge', turnId: `merge-${Date.now()}`, createdAt: Date.now(),
-      contextHash, toolsUsed: JSON.stringify(toolsUsed),
-      actions: JSON.stringify({ merged_from: sourceIds }),
-      lesson: JSON.stringify(mergedLesson), difficulty,
-    })
-
-    for (const sourceId of sourceIds) {
-      this.db.prepare('UPDATE experiences SET merged = 1 WHERE id = ?').run(sourceId)
-    }
-
-    return id
-  }
-
-  /** P5: Export all experiences as JSON array */
-  exportAll(): any[] {
-    return this.db.prepare('SELECT * FROM experiences ORDER BY created_at ASC').all()
-      .map((r: any) => this.rowToRecord(r))
-      .map((rec: ExperienceRecord) => ({
-        id: rec.id,
-        outcomeScore: rec.outcomeScore,
-        toolsUsed: rec.toolsUsed,
-        lesson: rec.lesson,
-        difficulty: rec.difficulty,
-        taskPattern: rec.taskPattern,
-        generation: rec.generation,
-        merged: rec.merged,
-        confidence: rec.confidence,
-        reuseCount: rec.reuseCount,
-        createdAt: rec.createdAt,
-        actions: rec.actions,
-      }))
-  }
-
-  /** P5: Export filtered by task pattern */
-  exportByTaskPattern(taskPattern: string): any[] {
-    return this.db.prepare('SELECT * FROM experiences WHERE task_pattern = ? ORDER BY created_at ASC')
-      .all(taskPattern)
-      .map((r: any) => this.rowToRecord(r))
-      .map((rec: ExperienceRecord) => ({
-        id: rec.id,
-        outcomeScore: rec.outcomeScore,
-        toolsUsed: rec.toolsUsed,
-        lesson: rec.lesson,
-        difficulty: rec.difficulty,
-        taskPattern: rec.taskPattern,
-        generation: rec.generation,
-        merged: rec.merged,
-        confidence: rec.confidence,
-        reuseCount: rec.reuseCount,
-        createdAt: rec.createdAt,
-        actions: rec.actions,
-      }))
-  }
-
-  /** P5: Import experiences from JSON array */
-  importExperiences(data: any[]): { imported: number; skipped: number; invalid: number } {
-    let imported = 0, skipped = 0, invalid = 0
-    const existingIds = new Set(
-      (this.db.prepare('SELECT id FROM experiences').all() as any[]).map((r: any) => r.id),
-    )
-    const insertStmt = this.db.prepare(`
-      INSERT OR IGNORE INTO experiences (
-        id, session_id, turn_id, created_at, context_hash,
-        task_pattern, tools_used, workspace_digest, actions, outcome_score,
-        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
-        confidence, reuse_count)
-      VALUES (@id, 'import', @turnId, @createdAt, @contextHash,
-        @taskPattern, @toolsUsed, NULL, @actions, @outcomeScore,
-        'none', @lesson, @difficulty, 0, NULL, @merged,
-        @confidence, @reuseCount)
-    `)
-    for (const item of data) {
-      if (typeof item !== 'object' || item === null ||
-          typeof item.id !== 'string' || typeof item.outcomeScore !== 'number') {
-        invalid++; continue
-      }
-      if (existingIds.has(item.id)) { skipped++; continue }
-      const tools = item.toolsUsed
-      const contextHash = Array.isArray(tools)
-        ? [...tools].sort().join(',')
-        : ''
-      insertStmt.run({
-        id: item.id,
-        turnId: `import-${item.createdAt}`,
-        createdAt: item.createdAt || Date.now(),
-        contextHash,
-        taskPattern: item.taskPattern ?? null,
-        toolsUsed: Array.isArray(tools) ? JSON.stringify(tools) : null,
-        actions: item.actions ?? '{}',
-        outcomeScore: item.outcomeScore,
-        lesson: item.lesson ?? null,
-        difficulty: item.difficulty ?? 'medium',
-        merged: item.merged ? 1 : 0,
-        confidence: item.confidence ?? 1.0,
-        reuseCount: item.reuseCount ?? 0,
-      })
-      existingIds.add(item.id)
-      imported++
-    }
-    return { imported, skipped, invalid }
-  }
-
-  close(): void { this.db.close() }
-  clear(): void { this.db.exec('DELETE FROM experiences') }
-}
 
 // ---------------------------------------------------------------------------
 // Plugin apply — wires everything to dsh's real event hooks
@@ -672,10 +215,40 @@ function generateStructuredReflection(entry: {
 }
 
 /**
- * P2: Rule-based lesson merging (fallback when no LLM available).
- * Consolidates related lessons into a single general lesson.
+ * I2: Build LLM prompt for lesson generation from turn data.
  */
-function mergeLessonsRuleBased(records: ExperienceRecord[]): {
+function buildLessonPrompt(entry: {
+  actions: string
+  outcomeScore: number
+  userFeedback: string
+  toolsUsed: string[]
+  stepCount?: number
+  difficulty?: 'low' | 'medium' | 'high'
+}): string {
+  let parsedActions: any = {}
+  try { parsedActions = JSON.parse(entry.actions) } catch {}
+  const toolNames = parsedActions.tools?.map((t: any) => t.tool).filter(Boolean) ?? entry.toolsUsed
+  const failedTools = parsedActions.tools?.filter((t: any) => !t.ok).map((t: any) => t.tool) ?? []
+
+  return `You are a reflection engine. Analyze this agent turn and produce a structured lesson.
+
+## Turn Data
+- Tools used: ${toolNames.join(' → ')}
+- Failed tools: ${failedTools.join(', ') || 'none'}
+- Steps: ${entry.stepCount ?? 'unknown'}
+- Difficulty: ${entry.difficulty ?? 'medium'}
+- Outcome score: ${entry.outcomeScore.toFixed(2)}
+- User feedback: ${entry.userFeedback}
+
+## Task
+Produce a concise, actionable lesson from this turn. Focus on what specifically worked or failed, not generic advice.
+
+## Output Format
+Respond with ONLY valid JSON, no markdown fences:
+{"whatWorked":"specific description","whatFailed":"specific description","whatToTryDifferently":"suggestion","reusableLesson":"concise actionable lesson under 50 words"}`
+}
+
+
   whatWorked: string
   whatFailed: string
   whatToTryDifferently: string
@@ -1104,13 +677,52 @@ export function apply(ctx: Context, config: Config): void {
       }
     } catch { /* ignore */ }
 
-    const expId = store.store(
-      agent.id, `turn-${turn}`, outcomeScore, userFeedback,
-      toolsUsed, actions, wsDigest, difficulty, taskPattern,
-      entry.taskUnitId, entry.goalId,
-    )
+    const outcome: TurnOutcome = {
+      turnId: `turn-${turn}`,
+      sessionId: agent.id,
+      goalProgress,
+      toolCallCount,
+      toolSuccessRate,
+      guardTriggerCount: guardCount,
+      userFeedback,
+      stepEfficiency,
+      difficulty,
+      outcomeScore,
+      timestamp: Date.now(),
+    }
+
+    // I5: Determine source based on feedback signal quality
+    const expSource = userFeedback === 'positive' ? 'user-confirmed'
+      : implicitNegative ? 'tool-derived'
+      : 'model-inferred'
+
+    const expId = store.store(outcome, {
+      taskPattern,
+      toolsUsed,
+      workspaceDigest: wsDigest,
+      actions,
+      taskUnitId: entry.taskUnitId,
+      goalId: entry.goalId,
+      source: expSource,
+    })
 
     log(`turn ${turn} scored — score=${outcomeScore.toFixed(2)} | goal=${goalProgress} tools=${toolCallCount} successRate=${toolSuccessRate.toFixed(2)} steps=${stepCount} efficiency=${stepEfficiency.toFixed(2)} difficulty=${difficulty} task=${taskPattern ?? 'unknown'} guards=${guardCount} feedback=${userFeedback} implicitNeg=${implicitNegative} | exp ${expId}`)
+
+    // I4: Extract atomic facts from this turn and write to atomic_facts table
+    try {
+      const subject = `workspace:${wsDigest ?? 'default'}`
+      if (outcomeScore >= 0.7 && toolsUsed.length > 0) {
+        store.upsertFact(subject, 'effective-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
+      }
+      if (outcomeScore <= 0.3 && toolsUsed.length > 0) {
+        store.upsertFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
+      }
+      if (taskPattern) {
+        store.upsertFact(subject, 'task-type', taskPattern, 'model-inferred')
+      }
+    } catch (err) {
+      log(`atomic fact extraction error: ${(err as Error).message}`)
+    }
 
     // P2: Synchronously generate lesson (don't wait for maintenance)
     if (config.metaCognitionEnabled) {
@@ -1175,8 +787,15 @@ export function apply(ctx: Context, config: Config): void {
           : ''
         const currentTaskPattern = msgText ? inferTaskPattern(msgText) : null
 
-        // P5: Query with task pattern for better matching
-        const records = store.query([], wsDigest, 10, config.minInjectionScore)
+        // I3: Query with searchText for FTS5+BM25 semantic recall
+        const searchText = msgText ? msgText.slice(0, 100) : undefined
+        const records = store.query({
+          workspaceDigest: wsDigest,
+          limit: 10,
+          minScore: config.minInjectionScore,
+          taskPattern: currentTaskPattern ?? undefined,
+          searchText,
+        })
 
         // Always call next() first (waterfall contract: never short-circuit)
         const decision = await next()
@@ -1190,7 +809,8 @@ export function apply(ctx: Context, config: Config): void {
               const bMatch = b.taskPattern === currentTaskPattern ? 1 : 0
               if (bMatch !== aMatch) return bMatch - aMatch
             }
-            const dp = store.difficultyPriority(b.difficulty) - store.difficultyPriority(a.difficulty)
+            const diffPriority = (d: string) => d === 'high' ? 3 : d === 'medium' ? 2 : 1
+            const dp = diffPriority(b.difficulty) - diffPriority(a.difficulty)
             return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
           })
           const best = sorted[0]
@@ -1311,14 +931,31 @@ export function apply(ctx: Context, config: Config): void {
     while (pendingReflections.length > 0) {
       const entry = pendingReflections.shift()!
 
-      // Generate structured reflection (P2: actionable lesson, P4: JSON stored)
-      const reflection = generateStructuredReflection(entry)
+      // I2: Try LLM lesson generation first, fall back to rule-based
+      let reflection = generateStructuredReflection(entry)
+      const llmResponse = await tryLLMComplete(ctx, buildLessonPrompt(entry))
+      if (llmResponse) {
+        try {
+          const clean = llmResponse.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+          const parsed = JSON.parse(clean)
+          reflection = {
+            whatWorked: parsed.whatWorked ?? parsed.what_worked ?? reflection.whatWorked,
+            whatFailed: parsed.whatFailed ?? parsed.what_failed ?? reflection.whatFailed,
+            whatToTryDifferently: parsed.whatToTryDifferently ?? parsed.what_to_try_differently ?? reflection.whatToTryDifferently,
+            reusableLesson: parsed.reusableLesson ?? parsed.reusable_lesson ?? reflection.reusableLesson,
+          }
+          log(`lesson generated (LLM) — ${reflection.reusableLesson}`)
+        } catch {
+          log(`lesson generated (rule-based, LLM parse failed) — ${reflection.reusableLesson}`)
+        }
+      } else {
+        log(`lesson generated (rule-based, no LLM) — ${reflection.reusableLesson}`)
+      }
       store.updateLesson(entry.expId, reflection)
-      log(`lesson generated — ${reflection.reusableLesson}`)
 
-      // Boost confidence on similar past experiences if this was positive
+      // I6: Boost confidence on similar past experiences if this was positive
       if (entry.outcomeScore >= 0.7) {
-        const similar = store.query(entry.toolsUsed, null, 5, 0.6)
+        const similar = store.query({ toolsUsed: entry.toolsUsed, limit: 5, minScore: 0.6 })
         for (const rec of similar) {
           if (rec.id !== entry.expId) {
             store.boostConfidence(rec.id)
