@@ -79,6 +79,7 @@ export interface ExperienceRecord {
 
   // Context signature
   contextHash: string
+  contentHash: string | null // E2: sha1 of ordered tool sequence (with success/failure) + workspace
   taskPattern: string | null
   toolsUsed: string[] | null
   workspaceDigest: string | null

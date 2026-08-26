@@ -89,16 +89,17 @@
 - `systemPrompt.section({ name: 'self-improving-learned-preferences', order: 450 })` 的 `text()` 现在优先读取 `~/.dsh/preferences.md`，叠加 live stats 作为补充信号
 - rule-enforcement 的注入通道（`rules.md` → `systemPrompt.section({ order: 200 })`）不改动，两套独立 ✓
 
-### A2 中层：场景聚类跨项目经验 + TTL 过期 [P5, P6.1] [~]
-- **按主题聚类历史会话**：以 `task_pattern` 为聚类键。task_pattern 落值已由 A7 实现（`inferTaskPattern`），但聚类逻辑本身未实现
-- **TTL 过期机制**：仅保留近期或高频经验，过期自动降级或丢弃。`last_injected_at` 字段已存在，但无 TTL 过期逻辑
-- 当前实现只有分代 GC（新生代 200 + 老年代 800），无 TTL 过期
+### A2 中层：场景聚类跨项目经验 + TTL 过期 [P5, P6.1] [x]
+- **按主题聚类历史会话**：以 `task_pattern` 为聚类键，已由 A7 实现落值（`inferTaskPattern`），注入时按 task_pattern 优先匹配 ✓
+- **TTL 过期机制**：已实现 `applyTTL()`（`experience-store.ts`），30 天未注入的老年代经验降级到新生代，重新参与 Minor GC
+  - 高难度有 lesson 的经验豁免（知识可能仍有效即使久未注入）✓
+  - 在 `enforceRetention()` 中每次 store 时触发 ✓
 
 ### A3 底层：原子事实 + 双索引检索 [P4, P6.1] [~]
 - 结构化存储具体事实（如"项目 X 的部署命令是 Y"），永不过期 — **未实现**：无独立原子事实表
 - **两阶段召回**：已实现粗筛（SQL filter by score + task_pattern + merged）+ 精筛（`compositeRank`: score×0.4 + 工具相似度×0.3 + 时间近度×0.3），见 `experience-store.ts:243-299`
   - 粗筛用 SQL WHERE，但 **未用 BM25（SQLite FTS5）**——对 lesson/actions 建 FTS 未实现
-  - 仍以 `context_hash` 做去重键（E2 要求改为 `content_hash`，未实现）
+  - **E2 content_hash 去重已实现**：`computeContentHash()` 对有序工具序列含成败做 sha1，去重优先用 `content_hash`，无值时 fallback 到 `context_hash` ✓
   - 精筛综合评分已实现
   - 两阶段都走 SQL，避免全表扫描 ✓
 
@@ -111,9 +112,12 @@
   - 数据库实现：`generation` 字段（0=新生代, 1=老年代）+ `last_injected_at` ✓
   - 代码位置：`experience-store.ts:437-526`
 
-### A5 主动遗忘机制 [P6.3] [ ]
-- 主动清理低价值、低置信度经验，不依赖被动 FIFO 上限
-- 与 A4 分代策略配合；当前无"按价值/置信度主动清理"路径
+### A5 主动遗忘机制 [P6.3] [x]
+- ~~主动清理低价值、低置信度经验，不依赖被动 FIFO 上限~~ 已实现
+- **实现**：`activeForget()`（`experience-store.ts`），在 `enforceRetention()` 中每次 store 时触发
+- **条件**：`score < 0.3 AND confidence < 0.2 AND lesson IS NULL AND difficulty = 'low' AND merged = 0`
+- 不删除有 lesson、高难度、或已被合并的经验 ✓
+- 与 A4 分代策略配合：主动遗忘在 GC 前执行，先清理噪声再处理容量压力 ✓
 
 ### A6 检索范围动态伸缩 [P4] [x]
 - ~~当前：query 固定返回 limit 条~~ 已实现动态候选集
@@ -126,7 +130,7 @@
 - `inferTaskPattern()` 在 `src/types/index.ts:230` 实现，从用户首条消息关键词推断 bugfix/feature/refactoring/search/test-writing/general
 - 存储环节：`turn-stopping` 中自动推断并存入（`index.ts:776-784`）
 - 注入环节：`agent/pre-step` 中按 `task_pattern` 优先匹配（`index.ts:857-863`）
-- 未落地期间的限制已消除：行为级去重仍用 `context_hash`（E2 的 `content_hash` 未实现）
+- 未落地期间的限制已消除：行为级去重已改用 `content_hash`（E2 已实现，优先于 `context_hash`）✓
 
 ---
 

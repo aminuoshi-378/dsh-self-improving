@@ -11,6 +11,7 @@
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { ulid } from 'ulid'
+import { createHash } from 'node:crypto'
 import type {
   ExperienceRecord,
   ExperienceQuery,
@@ -23,6 +24,14 @@ import { isValidImportedExperience } from '../types/index.js'
 const YOUNG_GEN_MAX = 200
 const OLD_GEN_MAX = 800
 const LESSON_MERGE_THRESHOLD = 20
+
+// A2: TTL — experiences not injected in TTL_DAYS get downgraded (old gen) or evicted
+const TTL_DAYS = 30
+const TTL_MS = TTL_DAYS * 24 * 60 * 60 * 1000
+
+// A5: Active forgetting — threshold for proactively cleaning low-value experiences
+const FORGET_SCORE_THRESHOLD = 0.3
+const FORGET_CONFIDENCE_THRESHOLD = 0.2
 
 export class ExperienceStore {
   private db: DatabaseType
@@ -85,6 +94,7 @@ export class ExperienceStore {
     this.ensureColumn('tags', 'TEXT')
     this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
     this.ensureColumn('goal_id', 'TEXT')
+    this.ensureColumn('content_hash', 'TEXT')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiences_context ON experiences(context_hash);
@@ -96,6 +106,7 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_experiences_merged ON experiences(merged);
       CREATE INDEX IF NOT EXISTS idx_experiences_task_unit ON experiences(task_unit_id);
       CREATE INDEX IF NOT EXISTS idx_experiences_goal ON experiences(goal_id);
+      CREATE INDEX IF NOT EXISTS idx_experiences_content_hash ON experiences(content_hash);
     `)
   }
 
@@ -125,12 +136,14 @@ export class ExperienceStore {
     tags?: string[]
   }): string {
     const id = ulid()
-    const taskUnitId = context.taskUnitId ?? id // Default: this turn is its own task unit
+    const taskUnitId = context.taskUnitId ?? id
     const contextHash = this.computeContextHash(
       context.taskPattern,
       context.toolsUsed,
       context.workspaceDigest,
     )
+    // E2: content_hash — sha1 of ordered tool call sequence (with success/failure) + workspace
+    const contentHash = this.computeContentHash(context.actions, context.workspaceDigest) ?? null
 
     const stmt = this.db.prepare(`
       INSERT INTO experiences (
@@ -139,14 +152,14 @@ export class ExperienceStore {
         context_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
         difficulty, generation, last_injected_at, merged,
-        tags, confidence, reuse_count
+        tags, confidence, reuse_count, content_hash
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
         @taskUnitId, @goalId,
         @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
         @difficulty, @generation, @lastInjectedAt, @merged,
-        @tags, @confidence, @reuseCount
+        @tags, @confidence, @reuseCount, @contentHash
       )
     `)
 
@@ -172,6 +185,7 @@ export class ExperienceStore {
       tags: context.tags ? JSON.stringify(context.tags) : null,
       confidence: 1.0,
       reuseCount: 0,
+      contentHash,
     })
 
     // Enforce retention limit
@@ -313,15 +327,23 @@ export class ExperienceStore {
   }
 
   /**
-   * P0: Deduplicate records by context_hash.
-   * For records sharing the same context_hash, keep only the newest one.
+   * E2/P0: Deduplicate records by content_hash (preferred) or context_hash (fallback).
+   * For records sharing the same hash, keep only the best one (highest score, then newest).
    */
   private deduplicateByContextHash(records: ExperienceRecord[]): ExperienceRecord[] {
     const seen = new Map<string, ExperienceRecord>()
     for (const rec of records) {
-      const existing = seen.get(rec.contextHash)
-      if (!existing || rec.createdAt > existing.createdAt) {
-        seen.set(rec.contextHash, rec)
+      // Prefer content_hash if available, fall back to context_hash
+      const hash = rec.contentHash ?? rec.contextHash
+      const existing = seen.get(hash)
+      if (!existing) {
+        seen.set(hash, rec)
+      } else {
+        // Keep the one with higher score, then newer
+        if (rec.outcomeScore > existing.outcomeScore ||
+            (rec.outcomeScore === existing.outcomeScore && rec.createdAt > existing.createdAt)) {
+          seen.set(hash, rec)
+        }
       }
     }
     return [...seen.values()]
@@ -449,6 +471,14 @@ export class ExperienceStore {
    *     Never evict: difficulty=high with lesson
    */
   private enforceRetention(): void {
+    // A5: Active forgetting — proactively clean low-value, low-confidence experiences
+    // Runs before generational GC to remove noise independent of capacity pressure
+    this.activeForget()
+
+    // A2: TTL — downgrade stale old-gen experiences to young gen if not injected in TTL_DAYS
+    // This gives stale experiences a chance to be re-evaluated (and possibly evicted in next Minor GC)
+    this.applyTTL()
+
     // --- Minor GC: young generation ---
     const youngCount = (this.db.prepare(
       'SELECT COUNT(*) as c FROM experiences WHERE generation = 0',
@@ -533,6 +563,44 @@ export class ExperienceStore {
   }
 
   /**
+   * A5: Active forgetting — proactively clean low-value, low-confidence experiences.
+   * Unlike passive GC (capacity-triggered), this runs on every store() call
+   * and removes clearly worthless records regardless of capacity.
+   * Criteria: score < 0.3 AND confidence < 0.2 AND no lesson AND difficulty = low
+   * Never deletes high-difficulty or lesson-bearing records.
+   */
+  private activeForget(): void {
+    const result = this.db.prepare(`
+      DELETE FROM experiences
+      WHERE outcome_score < @scoreThreshold
+        AND confidence < @confidenceThreshold
+        AND lesson IS NULL
+        AND difficulty = 'low'
+        AND merged = 0
+    `).run({ scoreThreshold: FORGET_SCORE_THRESHOLD, confidenceThreshold: FORGET_CONFIDENCE_THRESHOLD })
+    if (result.changes > 0) {
+      // Could log here if needed
+    }
+  }
+
+  /**
+   * A2: TTL expiry — downgrade old-gen experiences not injected in TTL_DAYS to young gen.
+   * This lets stale experiences re-enter the Minor GC cycle and potentially get evicted.
+   * High-difficulty experiences with lessons are exempt (knowledge may still be valuable even if stale).
+   */
+  private applyTTL(): void {
+    const cutoff = Date.now() - TTL_MS
+    this.db.prepare(`
+      UPDATE experiences
+      SET generation = 0
+      WHERE generation = 1
+        AND (last_injected_at IS NULL OR last_injected_at < @cutoff)
+        AND created_at < @cutoff
+        AND NOT (difficulty = 'high' AND lesson IS NOT NULL)
+    `).run({ cutoff })
+  }
+
+  /**
    * P3: Promote a specific experience to old gen (e.g. after LLM merge).
    */
   promoteToOldGen(id: string): void {
@@ -574,6 +642,28 @@ export class ExperienceStore {
       workspaceDigest ?? '',
     ]
     return parts.join('|')
+  }
+
+  /**
+   * E2: Compute a content hash from the actions JSON (ordered tool sequence + success/failure).
+   * Input: actions JSON string ({tools: [{name, success}], ...}) + workspace digest.
+   * The tool sequence is ordered (not sorted) — call order is semantic.
+   * goalProgress/feedback are results, not content, so they're excluded.
+   * Returns null if actions isn't valid JSON with a tools array (fallback to context_hash for dedup).
+   */
+  computeContentHash(actions: string, workspaceDigest: string | null): string | null {
+    try {
+      const parsed = JSON.parse(actions)
+      const tools = (parsed.tools ?? []) as { name: string; success: boolean }[]
+      if (!Array.isArray(tools) || tools.length === 0) return null
+      // Format: toolName:success,toolName:success,...|workspace
+      const toolStr = tools.map((t) => `${t.name}:${t.success}`).join(',')
+      const input = `${toolStr}|${workspaceDigest ?? ''}`
+      return createHash('sha1').update(input).digest('hex').slice(0, 16)
+    } catch {
+      // If actions isn't valid JSON, return null to fall back to context_hash dedup
+      return null
+    }
   }
 
   /**
@@ -631,9 +721,10 @@ export class ExperienceStore {
       sessionId: row.session_id,
       turnId: row.turn_id,
       createdAt: row.created_at,
-      taskUnitId: row.task_unit_id || row.id, // Fallback for old rows without the column
+      taskUnitId: row.task_unit_id || row.id,
       goalId: row.goal_id ?? null,
       contextHash: row.context_hash,
+      contentHash: row.content_hash ?? null,
       taskPattern: row.task_pattern,
       toolsUsed: row.tools_used ? JSON.parse(row.tools_used) : null,
       workspaceDigest: row.workspace_digest,
@@ -923,6 +1014,7 @@ interface RawExperienceRow {
   task_unit_id: string
   goal_id: string | null
   context_hash: string
+  content_hash: string | null
   task_pattern: string | null
   tools_used: string | null
   workspace_digest: string | null

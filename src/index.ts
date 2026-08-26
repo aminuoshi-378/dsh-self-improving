@@ -107,6 +107,7 @@ class ExperienceStore {
         task_unit_id TEXT NOT NULL DEFAULT '',
         goal_id TEXT,
         context_hash TEXT NOT NULL,
+        content_hash TEXT,
         task_pattern TEXT,
         tools_used TEXT,
         workspace_digest TEXT,
@@ -130,6 +131,7 @@ class ExperienceStore {
     this.ensureColumn('merged', 'INTEGER DEFAULT 0')
     this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
     this.ensureColumn('goal_id', 'TEXT')
+    this.ensureColumn('content_hash', 'TEXT')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_exp_context ON experiences(context_hash);
@@ -138,6 +140,7 @@ class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_exp_difficulty ON experiences(difficulty);
       CREATE INDEX IF NOT EXISTS idx_exp_generation ON experiences(generation);
       CREATE INDEX IF NOT EXISTS idx_exp_merged ON experiences(merged);
+      CREATE INDEX IF NOT EXISTS idx_exp_content_hash ON experiences(content_hash);
     `)
   }
 
@@ -163,21 +166,32 @@ class ExperienceStore {
     goalId?: string | null,
   ): string {
     const id = ulid()
-    const taskUnit = taskUnitId ?? id // Default: this turn is its own task unit
+    const taskUnit = taskUnitId ?? id
     const contextHash = [taskPattern ?? '', toolsUsed.slice().sort().join(','), workspaceDigest ?? ''].join('|')
+    // E2: content_hash — sha1 of ordered tool call sequence (with success/failure) + workspace
+    let contentHash: string | null = null
+    try {
+      const crypto = require('node:crypto')
+      const parsed = JSON.parse(actions)
+      const tools = (parsed.tools ?? []) as { name: string; success: boolean }[]
+      if (Array.isArray(tools) && tools.length > 0) {
+        const toolStr = tools.map((t) => `${t.name}:${t.success}`).join(',')
+        contentHash = crypto.createHash('sha1').update(`${toolStr}|${workspaceDigest ?? ''}`).digest('hex').slice(0, 16)
+      }
+    } catch { contentHash = null }
 
     this.db.prepare(`
       INSERT INTO experiences (id, session_id, turn_id, created_at, task_unit_id, goal_id,
-        context_hash, task_pattern, tools_used, workspace_digest, actions, outcome_score,
+        context_hash, content_hash, task_pattern, tools_used, workspace_digest, actions, outcome_score,
         user_feedback, lesson, difficulty, generation, last_injected_at, merged,
         confidence, reuse_count)
       VALUES (@id, @sessionId, @turnId, @createdAt, @taskUnit, @goalId,
-        @contextHash, @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
+        @contextHash, @contentHash, @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
         @difficulty, 0, NULL, 0, 1.0, 0)
     `).run({
       id, sessionId, turnId, createdAt: Date.now(),
       taskUnit, goalId: goalId ?? null,
-      contextHash, taskPattern, toolsUsed: JSON.stringify(toolsUsed),
+      contextHash, contentHash, taskPattern, toolsUsed: JSON.stringify(toolsUsed),
       ws: workspaceDigest, actions, score: outcomeScore, feedback: userFeedback,
       difficulty,
     })
