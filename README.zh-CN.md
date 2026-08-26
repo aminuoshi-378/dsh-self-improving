@@ -137,8 +137,19 @@ dsh plugin --profile web add /绝对路径/dsh-self-improving-gui-0.1.0.tgz
 ```bash
 cd dsh-self-improving
 pnpm install          # 安装依赖
-pnpm test             # 跑 44 个单元测试
+pnpm test             # 跑 81 个单元测试（6 个测试文件）
 pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
+```
+
+单独跑某个测试文件：
+
+```bash
+pnpm run test:store      # 经验库（14 个）
+pnpm run test:evaluator  # 结果评分器（8 个）
+pnpm run test:adapter    # 行为适配器（11 个）
+pnpm run test:meta       # 元认知引擎（11 个）
+pnpm run test:memory     # 记忆能力 benchmark（15 个）
+pnpm run test:advanced   # 高级特性 A1-B2（22 个）
 ```
 
 ---

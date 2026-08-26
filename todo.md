@@ -398,3 +398,49 @@
 ### K4 pre-step 注入的 searchText 含特殊字符 [P2] [x]
 - ~~searchText 直接取用户消息原文，含 FTS5 特殊语法字符~~ 已修复
 - searchText 做 sanitize：去掉 `` `~!@#$%^&*()=[]{}|;:'",.<>/\ `` 等特殊字符，多空格合并，截断 100 字符 ✓
+
+---
+
+## 域 L — 第四轮架构评审（2026-08-26）
+
+> 焦点：构建能否通过、dist 是否与 src 同步、文档是否与代码一致。
+> 结论：核心四层闭环（评分 → 存储 → 注入 → 反思）在源码层面已全部接通，但有编译错误导致 dist 过期、文档数字不准。
+
+### L1 tsc 编译失败，dist/ 过期 [P0] [x]
+- ~~**问题**：`tsc --noEmit` 有 5 类编译错误，`pnpm run build` 无法通过~~ 已全部修复
+- ~~dist/index.js 停留在 I8 模块化拆分之前的版本~~ 已重新编译，dist/ 包含全部 7 个模块
+- **子项**：
+  - L1-a `stats.positive` / `stats.negative` → 改为 `stats.positiveCount` / `stats.negativeCount`（`index.ts` 3 处 + `preference-extractor.ts` 2 处）✓
+  - L1-b `rowToRecord()` 补 `source: row.source ?? 'model-inferred'`（`experience-store.ts:856`）✓
+  - L1-c `wsDigest` 的 `null` → `undefined`（`index.ts:451`，ExperienceQuery.workspaceDigest 接受 `string | undefined`）✓
+  - L1-d 删除 `index.ts` 和 `preference-extractor.ts` 中未使用的 `ExperienceRecord` import ✓
+  - 新增 `src/dsh-env.d.ts` ambient 声明文件，让 `tsc` 在 `@deepseek-ai/*` 包不在 node_modules 时也能编译 ✓
+  - `pnpm run build` 通过，dist/ 包含全部 7 个模块（index + preference-extractor + llm-bridge + reflection + store + types + evaluator/adapter/meta-cognition）✓
+
+### L2 README 测试数过时 [P2] [x]
+- ~~README 声称 "44 个单元测试"，实际为 81 个~~ 已更新
+- README.md 和 README.zh-CN.md 的测试数改为 81，补充分测试运行命令 ✓
+- CHANGELOG 测试数从 44 更新为 81 ✓
+- docs/test-plan.md 和 docs/design.md 中的 44 引用已更新 ✓
+- `package.json` 的 `test` 脚本补上 `advanced-features.test.ts`，新增 `test:advanced` 脚本 ✓
+
+### L3 CHANGELOG 引用了不存在的文档 [P2] [x]
+- ~~CHANGELOG [0.1.0] 声称有 `docs/plugin-dev-notes.md`~~ 已删除引用，替换为 `docs/design.md` ✓
+- 修复了 CHANGELOG 中重复的 design.md 行 ✓
+
+### L4 pnpm test / pnpm run build 被 deps status check 阻断 [P1] [x]
+- ~~`pnpm test` 和 `pnpm run build` 触发 pnpm 自动检查依赖状态，因 `@deepseek-ai/dsh-type-meta` 404 失败~~ 已修复
+- pnpm 11 的 `verify-deps-before-run` 配置从 `.npmrc` 迁移到 `pnpm-workspace.yaml`（camelCase: `verifyDepsBeforeRun: false`）✓
+- `.npmrc` 中保留注释说明原因 ✓
+- `pnpm test` 和 `pnpm run build` 不再触发自动 install ✓
+
+### L5 核心目标达成评估 [x]
+- **四层架构闭环已实现**：
+  - Layer 1（评分）：turn-stopping → 5 维度评分（goalProgress + toolSuccess + stepEfficiency + guardPenalty + feedback）→ 存储 ✓
+  - Layer 2（注入）：pre-step（每 turn 一次，去重，动态条数）+ systemPrompt.section（偏好 + 原子事实）✓
+  - Layer 3（存储）：SQLite sidecar，分代 GC，FTS5 trigram，导入/导出 ✓
+  - Layer 4（反思）：turn-stopping 入队 → run-maintenance 处理（LLM 优先 + rule-based fallback）→ lesson 落库 → C5 定期合并 ✓
+- **双向反馈闭环已实现**：注入经验 → 高分时 boost confidence（J7 精确 boost）✓
+- **数据管道已贯通**：原子事实提取（I4）→ 冲突检测（J2）→ systemPrompt 注入（J4）✓
+- **未实现的计划项**：Phase 6 自适应策略调整（agent/request 模型选择、tools/restrict 工具推荐、守卫阈值自适应）— 仍在计划中，未开始
+- **结论**：核心目标（跨会话学习闭环）已实现，L1 编译错误已修复，dist 产物已更新 ✓

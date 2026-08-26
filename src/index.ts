@@ -20,7 +20,7 @@ import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import { ulid } from 'ulid'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
-import type { ExperienceRecord, TurnOutcome } from './types/index.js'
+import type { TurnOutcome } from './types/index.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
 import { tryLLMComplete, llmMergeLessons } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
@@ -448,7 +448,7 @@ export function apply(ctx: Context, config: Config): void {
 
       try {
         // Query experience store for similar past turns
-        const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+        const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : undefined
 
         // P5: Infer task pattern from current messages for better retrieval
         const firstMsg = payload.messages?.[0]
@@ -595,8 +595,8 @@ export function apply(ctx: Context, config: Config): void {
           if (stats.avgScore < 0.4) {
             lines.push(`- Recent outcomes have low scores (avg ${stats.avgScore.toFixed(2)}) — consider more careful tool selection`)
           }
-          if (stats.positive > stats.total * 0.5) {
-            lines.push(`- User has given positive feedback on ${stats.positive} of ${stats.total} turns`)
+          if (stats.positiveCount > stats.total * 0.5) {
+            lines.push(`- User has given positive feedback on ${stats.positiveCount} of ${stats.total} turns`)
           }
         }
 
@@ -715,7 +715,7 @@ export function apply(ctx: Context, config: Config): void {
     // Distill preferences + log stats
     const stats = store.stats()
     if (stats.total > 0) {
-      log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positive} withLessons=${stats.withLessons} youngGen=${stats.youngGenCount} oldGen=${stats.oldGenCount} highDiff=${stats.highDifficultyCount} merged=${stats.mergedCount}`)
+      log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positiveCount} withLessons=${stats.withLessons} youngGen=${stats.youngGenCount} oldGen=${stats.oldGenCount} highDiff=${stats.highDifficultyCount} merged=${stats.mergedCount}`)
     }
   })
 

@@ -853,6 +853,7 @@ export class ExperienceStore {
       tags: row.tags ? JSON.parse(row.tags) : null,
       confidence: row.confidence,
       reuseCount: row.reuse_count,
+      source: row.source ?? 'model-inferred',
     }
   }
 

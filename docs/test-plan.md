@@ -306,6 +306,6 @@ pnpm test:memory    # 新增的测试脚本
 | 阶段 | 验收标准 |
 |---|---|
 | 步骤 1-3 | `pnpm test:memory` 全部通过，5 组测试用例 ≥ 15 个 assert 全绿 |
-| 步骤 3 | `pnpm test` 全部通过（原有 44 个 + 新增测试，无回归） |
+| 步骤 3 | `pnpm test` 全部通过（81 个测试，无回归） |
 | 步骤 4 | `pnpm run benchmark` 生成报告，连续任务链中 enabled 组的 completionRate > baseline 组 |
 | 步骤 5 | 真实 agent 跑连续任务时，有经验注入的 session-2 步数 < session-1 步数 |

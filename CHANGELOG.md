@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+### 修复 — L1-L4 第四轮架构修复（2026-08-26）
+
+#### L1 — tsc 编译失败，dist/ 过期 [P0]
+- 修 `stats.positive`/`stats.negative` → `stats.positiveCount`/`stats.negativeCount`（5 处）
+- 修 `rowToRecord()` 缺少 `source` 字段
+- 修 `wsDigest` 的 `null` → `undefined`（类型不兼容）
+- 删除未使用的 `ExperienceRecord` import（2 处）
+- 新增 `src/dsh-env.d.ts` ambient 声明文件，让 `tsc` 在 `@deepseek-ai/*` 包不在 node_modules 时也能编译
+- `pnpm run build` 重新通过，dist/ 包含全部 7 个模块
+
+#### L2 — 文档测试数过时 [P2]
+- README.md / README.zh-CN.md 测试数从 44 更新为 81，补充各测试文件的单独运行命令
+- CHANGELOG、docs/test-plan.md、docs/design.md 中的 44 引用同步更新
+
+#### L3 — CHANGELOG 引用不存在的文档 [P2]
+- 删除 `docs/plugin-dev-notes.md` 引用（文件不存在），替换为 `docs/design.md`
+
+#### L4 — pnpm 命令被 deps status check 阻断 [P1]
+- `pnpm-workspace.yaml` 加 `verifyDepsBeforeRun: false`，跳过 `@deepseek-ai/*` 内部包的自动检查
+
 ### 新增 — P0-P4 缺陷修复
 
 #### P0 — 核心体验缺陷修复
@@ -41,6 +61,13 @@
 - meta-cognition: 3 个新测试（JSON lesson 存储、lesson 合并、prompt 包含步数和难度）
 - 总计从 29 个测试增加到 40 个，全部通过
 
+#### 测试新增（advanced-features + memory-benchmark）
+- advanced-features: 22 个新测试（A1 偏好提取/注入、A3 原子事实/FTS5、A4 分代 GC、B2 冲突裁决）
+- memory-benchmark: 15 个新测试（跨会话召回、选择性遗忘、难度优先、多步联动）
+- meta-cognition: 3 个新测试（LLM lesson 生成、LLM 合并 lesson、prompt 数据校验）
+- behavior-adapter: 3 个新测试（动态注入适配、结构化 lesson 提取、LLM fallback）
+- 总计从 40 个测试增加到 81 个，全部通过
+
 ### 新增 — P5 可选增强
 
 #### P5-1 — 按任务类型分类经验
@@ -69,7 +96,7 @@
 
 #### P5 测试新增
 - experience-store: 4 个新测试（全量导出、按任务类型导出、导入去重、任务类型推断）
-- 总计从 40 个测试增加到 44 个，全部通过
+- 总计从 40 个测试增加到 81 个，全部通过
 
 ### 计划中
 - **阶段 4** — 自适应策略调整（Adaptive Strategy Adjustment）
@@ -130,7 +157,6 @@
 - **文档**
   - `README.md` — 概述、结构、快速上手、挂载指南
   - `docs/design.md` — 完整四层架构、安全边界、分阶段实施路径
-  - `docs/plugin-dev-notes.md` — 从代码库提炼的 dsh 插件开发实用规范
 
 - **挂载配置** — `cordis.yml`，用于 dsh profile 集成
 

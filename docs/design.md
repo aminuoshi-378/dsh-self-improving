@@ -373,6 +373,12 @@ GUI bridge 是**可选的**——没有 `settings` 服务时（headless 模式�
 - P5-3: 导入/导出经验
 - 新增 4 个测试（总计 44 个）
 
+### Phase 5.5 — 高级特性 + 记忆 benchmark ✅
+- advanced-features: 22 个测试（A1 偏好提取/注入、A3 原子事实/FTS5、A4 分代 GC、B2 冲突裁决）
+- memory-benchmark: 15 个测试（跨会话召回、选择性遗忘、难度优先、多步联动）
+- meta-cognition + behavior-adapter 增补 6 个测试
+- 总计 81 个测试
+
 ### Phase 6 — 自适应策略调整（计划中）
 - agent/request 瀑布：基于历史成功率选择模型
 - tools/restrict：基于历史使用模式推荐工具

@@ -9,7 +9,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import type { ExperienceStore } from './store/experience-store.js'
-import type { ExperienceRecord } from './types/index.js'
 
 /** Resolve preferences file path from config or DSH_HOME. */
 export function getPreferencesFilePath(dshHome?: string): string {
@@ -118,8 +117,8 @@ ${JSON.stringify(lessons.slice(0, 20), null, 2)}
 ## Stats
 - Total experiences: ${stats.total}
 - Average score: ${stats.avgScore.toFixed(2)}
-- Positive feedback: ${stats.positive}
-- Negative feedback: ${stats.negative}
+- Positive feedback: ${stats.positiveCount}
+- Negative feedback: ${stats.negativeCount}
 - High difficulty: ${stats.highDifficultyCount}
 
 ## Task
