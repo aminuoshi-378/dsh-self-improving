@@ -95,10 +95,14 @@
   - 高难度有 lesson 的经验豁免（知识可能仍有效即使久未注入）✓
   - 在 `enforceRetention()` 中每次 store 时触发 ✓
 
-### A3 底层：原子事实 + 双索引检索 [P4, P6.1] [~]
-- 结构化存储具体事实（如"项目 X 的部署命令是 Y"），永不过期 — **未实现**：无独立原子事实表
+### A3 底层：原子事实 + 双索引检索 [P4, P6.1] [x]
+- **原子事实表已实现**：`atomic_facts` 表（subject/predicate/object/source/confidence/evicted），永不过期，FTS5 全文索引，触发器自动同步
+  - `upsertFact()` 插入或更新事实，同 subject+predicate 存在则更新并提升 confidence
+  - `queryFacts()` 按 subject 精确查询或 FTS5 全文搜索
+  - `evictFact()` 软删除（标记 evicted=1）
+  - `detectFactConflicts()` 检测同 subject+predicate 不同 object 的冲突，按来源权重排序 ✓
 - **两阶段召回**：已实现粗筛 + 精筛（`experience-store.ts` query 方法）
-  - **A3 FTS5 + BM25 已实现**：对 lesson/actions 建全文索引（`experiences_fts` 虚拟表），触发器自动同步；有 `searchText` 时用 BM25 相关性排序粗筛，无则按 score 降序 ✓
+  - **FTS5 + BM25 已实现**：`experiences_fts` 虚拟表索引 lesson/actions，有 `searchText` 时 BM25 排序粗筛 ✓
   - **E2 content_hash 去重已实现**：`computeContentHash()` 对有序工具序列含成败做 sha1，去重优先用 `content_hash`，无值时 fallback 到 `context_hash` ✓
   - 精筛综合评分已实现：`outcome_score × 0.4 + 工具相似度 × 0.3 + 时间近度 × 0.3` ✓
   - 两阶段都走 SQL，避免全表扫描 ✓
@@ -136,12 +140,19 @@
 
 ## 域 B — 冲突裁决与更新机制（知识腐化防护）[P6.2]
 
-### B1 来源权重标注 [ ]
-- 为每条经验/事实增加来源字段：`user-confirmed` > `tool-derived` > `model-inferred` > `chat-mention`
+### B1 来源权重标注 [x]
+- ~~为每条经验/事实增加来源字段~~ 已实现
+- `atomic_facts` 表有 `source` 字段（`user-confirmed`/`tool-derived`/`model-inferred`/`chat-mention`）
+- `experiences` 表新增 `source` 列（migration via `ensureColumn`）
+- `SOURCE_WEIGHTS` 排序：`user-confirmed(4) > tool-derived(3) > model-inferred(2) > chat-mention(1)` ✓
+- `detectFactConflicts()` 中按来源权重排序冲突项 ✓
 
-### B2 冲突检测 + 覆写 / 合并 [ ]
-- 新经验与旧经验针对同一主题冲突时（如项目从 Webpack 迁到 Vite），识别并更新底层原子事实，或将旧经验标记为 `evicted`
-- 需要主题归一化（同一事实的多种表述可归并）才能识别冲突
+### B2 冲突检测 + 覆写 / 合并 [x]
+- ~~新经验与旧经验针对同一主题冲突时，识别并更新或标记 evicted~~ 已实现
+- `detectFactConflicts()`：检测同 subject+predicate 不同 object 的冲突 ✓
+- `evictFact(id)`：软删除旧事实（标记 `evicted=1`），保留历史可追溯 ✓
+- `upsertFact()`：同 subject+predicate 存在时更新 object 而非创建重复 ✓
+- 注：主题归一化（同一事实的多种表述可归并）未实现，当前 subject 需精确匹配
 
 ---
 
@@ -219,17 +230,17 @@
 
 ## 域 E — 行为适配注入 [P0, P3, P4]
 
-### E1 每个 turn 只注入一次经验 [P0] [~]
+### E1 每个 turn 只注入一次经验 [P0] [x]
 - ~~当前：`agent/pre-step` 每 step 触发，同一段经验在 turn 内重复注入 N 次~~ 已修复
-- 每个 turn 第一个 step 注入，后续跳过（`index.ts:829-834`，用 `injectedThisTurn` 标记）✓
-- **边界 bug 未完全修复**：当 `sorted.length < 2` 时 `best` 和 `worst` 是同一条记录，best/worst 会注入相同内容。代码中 **未加 `best.id !== worst.id` 保护**，但通过 P3 动态分配（high/medium/low 分区）减少了此场景的影响
+- 每个 turn 第一个 step 注入，后续跳过（用 `injectedThisTurn` 标记）✓
+- **边界 bug 已修复**：`worst` 在 `sorted.length <= 1` 时为 null，且 `worst.id !== best.id` 保护已加 ✓
 
-### E2 经验去重：内容 hash [P0] [~]
-- ~~当前：5 条内容几乎一样的经验全被查出注入~~ 部分修复
-- **已实现**：`deduplicateByContextHash` 按 `context_hash` 去重，保留最新（`experience-store.ts:305-314`）
-- **未实现**：TODO 要求的 `content_hash` 字段（对有序工具调用序列含成败做 sha1）**未实现**。当前去重仍用 `context_hash`（只编码"工具名+工作目录"），同一项目同工具序列会误判为重复
-- 数据库无 `content_hash` 列
-- 局限：跨任务用同工具序列仍会误判为重复——需 A7 的 task_pattern 辅助（A7 已实现，但去重逻辑未使用 task_pattern）
+### E2 经验去重：内容 hash [P0] [x]
+- ~~5 条内容几乎一样的经验全被查出注入~~ 已修复
+- **已实现**：`computeContentHash()` 对有序工具序列含成败做 sha1，存 `content_hash` 字段
+- 去重优先用 `content_hash`，无值时 fallback 到 `context_hash`（`deduplicateByContextHash`）
+- 保留最优一条（score 最高，其次最新）✓
+- 数据库有 `content_hash` 列 + 索引 ✓
 
 ### E3 注入内容动态控制 [P3] [x]
 - ~~当前：固定 limit，注入过长或过短~~ 已修复

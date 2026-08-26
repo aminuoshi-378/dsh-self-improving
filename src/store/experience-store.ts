@@ -82,7 +82,8 @@ export class ExperienceStore {
 
         tags TEXT,
         confidence REAL DEFAULT 1.0,
-        reuse_count INTEGER DEFAULT 0
+        reuse_count INTEGER DEFAULT 0,
+        source TEXT DEFAULT 'model-inferred'
       );
     `)
 
@@ -95,6 +96,7 @@ export class ExperienceStore {
     this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
     this.ensureColumn('goal_id', 'TEXT')
     this.ensureColumn('content_hash', 'TEXT')
+    this.ensureColumn('source', "TEXT DEFAULT 'model-inferred'")
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiences_context ON experiences(context_hash);
@@ -130,6 +132,45 @@ export class ExperienceStore {
         VALUES ('delete', old.rowid, COALESCE(old.lesson, ''), old.actions);
         INSERT INTO experiences_fts(rowid, lesson, actions)
         VALUES (new.rowid, COALESCE(new.lesson, ''), new.actions);
+      END;
+    `)
+
+    // A3: Atomic facts table — structured facts that never expire
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS atomic_facts (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        predicate TEXT NOT NULL,
+        object TEXT NOT NULL,
+        source TEXT DEFAULT 'model-inferred',
+        confidence REAL DEFAULT 0.5,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER,
+        evicted INTEGER DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_facts_subject ON atomic_facts(subject);
+      CREATE INDEX IF NOT EXISTS idx_facts_predicate ON atomic_facts(predicate);
+    `)
+    // FTS5 for atomic facts
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS atomic_facts_fts USING fts5(
+        subject, object, content='atomic_facts', content_rowid='rowid'
+      );
+    `)
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON atomic_facts BEGIN
+        INSERT INTO atomic_facts_fts(rowid, subject, object)
+        VALUES (new.rowid, new.subject, new.object);
+      END;
+      CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON atomic_facts BEGIN
+        INSERT INTO atomic_facts_fts(atomic_facts_fts, rowid, subject, object)
+        VALUES ('delete', old.rowid, old.subject, old.object);
+      END;
+      CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON atomic_facts BEGIN
+        INSERT INTO atomic_facts_fts(atomic_facts_fts, rowid, subject, object)
+        VALUES ('delete', old.rowid, old.subject, old.object);
+        INSERT INTO atomic_facts_fts(rowid, subject, object)
+        VALUES (new.rowid, new.subject, new.object);
       END;
     `)
   }
@@ -1054,6 +1095,135 @@ export class ExperienceStore {
   }
 
   // -------------------------------------------------------------------------
+  // A3: Atomic facts — structured facts that never expire
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A3: Store or update an atomic fact.
+   * If a fact with the same subject + predicate exists, update its object and bump confidence.
+   * If not, create a new fact.
+   */
+  upsertFact(subject: string, predicate: string, object: string, source: string = 'model-inferred'): string {
+    const id = ulid()
+    const now = Date.now()
+
+    // Check for existing fact with same subject + predicate
+    const existing = this.db.prepare(`
+      SELECT id, confidence FROM atomic_facts
+      WHERE subject = @subject AND predicate = @predicate AND evicted = 0
+    `).get({ subject, predicate }) as { id: string; confidence: number } | undefined
+
+    if (existing) {
+      // Update: newer fact overrides older, confidence boosted
+      this.db.prepare(`
+        UPDATE atomic_facts
+        SET object = @object, source = @source, updated_at = @now,
+            confidence = MIN(1.0, confidence + 0.1)
+        WHERE id = @id
+      `).run({ object, source, now, id: existing.id })
+      return existing.id
+    }
+
+    this.db.prepare(`
+      INSERT INTO atomic_facts (id, subject, predicate, object, source, confidence, created_at)
+      VALUES (@id, @subject, @predicate, @object, @source, @confidence, @createdAt)
+    `).run({ id, subject, predicate, object, source, confidence: 0.5, createdAt: now })
+
+    return id
+  }
+
+  /**
+   * A3: Query atomic facts by subject (exact match) or full-text search.
+   */
+  queryFacts(subject?: string, searchText?: string): AtomicFact[] {
+    if (subject) {
+      const rows = this.db.prepare(`
+        SELECT * FROM atomic_facts WHERE subject = @subject AND evicted = 0
+        ORDER BY updated_at DESC, created_at DESC
+      `).all({ subject }) as RawFactRow[]
+      return rows.map((r) => this.rowToFact(r))
+    }
+
+    if (searchText) {
+      try {
+        const safeQuery = searchText
+          .split(/[\s,]+/)
+          .filter((t) => t.length > 0)
+          .map((t) => `"${t.replace(/"/g, '""')}"`)
+          .join(' ')
+        if (safeQuery) {
+          const rows = this.db.prepare(`
+            SELECT f.* FROM atomic_facts f
+            JOIN atomic_facts_fts ffts ON f.rowid = ffts.rowid
+            WHERE atomic_facts_fts MATCH @matchText AND f.evicted = 0
+            ORDER BY bm25(atomic_facts_fts) ASC
+            LIMIT 20
+          `).all({ matchText: safeQuery }) as RawFactRow[]
+          return rows.map((r) => this.rowToFact(r))
+        }
+      } catch { /* fall through */ }
+    }
+
+    // No filter — return all non-evicted facts
+    const rows = this.db.prepare(`
+      SELECT * FROM atomic_facts WHERE evicted = 0
+      ORDER BY updated_at DESC, created_at DESC LIMIT 100
+    `).all() as RawFactRow[]
+    return rows.map((r) => this.rowToFact(r))
+  }
+
+  /**
+   * B2: Mark a fact as evicted (soft delete) — e.g. project migrated from Webpack to Vite.
+   */
+  evictFact(id: string): boolean {
+    const result = this.db.prepare('UPDATE atomic_facts SET evicted = 1 WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  /**
+   * B2: Detect conflicts — same subject + predicate but different object.
+   * Returns groups of conflicting facts.
+   */
+  detectFactConflicts(): { subject: string; predicate: string; conflicts: AtomicFact[] }[] {
+    const rows = this.db.prepare(`
+      SELECT subject, predicate, COUNT(*) as cnt
+      FROM atomic_facts WHERE evicted = 0
+      GROUP BY subject, predicate
+      HAVING COUNT(DISTINCT object) > 1
+    `).all() as { subject: string; predicate: string; cnt: number }[]
+
+    return rows.map(({ subject, predicate }) => {
+      const conflictRows = this.db.prepare(`
+        SELECT * FROM atomic_facts
+        WHERE subject = ? AND predicate = ? AND evicted = 0
+        ORDER BY confidence DESC, updated_at DESC
+      `).all(subject, predicate) as RawFactRow[]
+      const conflicts = conflictRows.map((r) => this.rowToFact(r))
+      // B1: Sort by source weight (higher = more authoritative), then confidence
+      conflicts.sort((a, b) => {
+        const w = (SOURCE_WEIGHTS[b.source] ?? 0) - (SOURCE_WEIGHTS[a.source] ?? 0)
+        if (w !== 0) return w
+        return b.confidence - a.confidence
+      })
+      return { subject, predicate, conflicts }
+    })
+  }
+
+  private rowToFact(row: RawFactRow): AtomicFact {
+    return {
+      id: row.id,
+      subject: row.subject,
+      predicate: row.predicate,
+      object: row.object,
+      source: row.source,
+      confidence: row.confidence,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? null,
+      evicted: Boolean(row.evicted),
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Lifecycle
   // -------------------------------------------------------------------------
 
@@ -1066,6 +1236,7 @@ export class ExperienceStore {
    */
   clear(): void {
     this.db.exec('DELETE FROM experiences')
+    this.db.exec('DELETE FROM atomic_facts')
   }
 }
 
@@ -1092,4 +1263,39 @@ interface RawExperienceRow {
   tags: string | null
   confidence: number
   reuse_count: number
+  source: string
+}
+
+// B1: Source weight ranking — higher = more authoritative
+const SOURCE_WEIGHTS: Record<string, number> = {
+  'user-confirmed': 4,
+  'tool-derived': 3,
+  'model-inferred': 2,
+  'chat-mention': 1,
+}
+
+// A3: Atomic fact types
+
+export interface AtomicFact {
+  id: string
+  subject: string     // e.g. "project:my-app"
+  predicate: string   // e.g. "deploy-command"
+  object: string      // e.g. "pnpm run deploy"
+  source: string      // B1: 'user-confirmed' | 'tool-derived' | 'model-inferred' | 'chat-mention'
+  confidence: number
+  createdAt: number
+  updatedAt: number | null
+  evicted: boolean
+}
+
+interface RawFactRow {
+  id: string
+  subject: string
+  predicate: string
+  object: string
+  source: string
+  confidence: number
+  created_at: number
+  updated_at: number | null
+  evicted: number
 }

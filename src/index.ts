@@ -1194,7 +1194,7 @@ export function apply(ctx: Context, config: Config): void {
             return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
           })
           const best = sorted[0]
-          const worst = sorted[sorted.length - 1]
+          const worst = sorted.length > 1 ? sorted[sorted.length - 1] : null
 
           // P3: Dynamic injection — allocate by difficulty
           const high = sorted.filter(r => r.difficulty === 'high').slice(0, 5)
@@ -1211,7 +1211,8 @@ export function apply(ctx: Context, config: Config): void {
             const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
             lines.push(`- **What worked**: ${lesson}`)
           }
-          if (worst.outcomeScore <= 0.4) {
+          // E1: Only inject "what failed" if worst is a different record than best
+          if (worst && worst.id !== best.id && worst.outcomeScore <= 0.4) {
             const lesson = extractLessonText(worst.lesson) ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
             lines.push(`- **What failed**: ${lesson}`)
           }
