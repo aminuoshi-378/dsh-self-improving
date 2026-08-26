@@ -1,5 +1,8 @@
 /**
- * Outcome Evaluator — Layer 1
+ * Outcome Evaluator — Layer 1 (test fixture)
+ *
+ * NOTE: This standalone class is used by tests only.
+ * The runtime plugin (src/index.ts) inlines equivalent scoring logic.
  *
  * Mounted on agent/turn-stopping (serial event, fires before a turn closes).
  * This is the last chance to observe a complete turn in flight.

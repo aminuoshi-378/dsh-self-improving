@@ -1,5 +1,9 @@
 /**
- * Behavior Adapter — Layer 2
+ * Behavior Adapter — Layer 2 (test fixture)
+ *
+ * NOTE: This standalone class is used by tests and benchmark only.
+ * The runtime plugin (src/index.ts) inlines equivalent logic and
+ * imports ExperienceStore directly. This class is kept for unit testing.
  *
  * Reads Experience Store, injects learned experience at the start of
  * new sessions / new steps. All injection is ADVISORY (context the model

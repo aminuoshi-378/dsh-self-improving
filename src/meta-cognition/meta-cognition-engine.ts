@@ -1,5 +1,9 @@
 /**
- * Meta-Cognition Engine — Layer 4
+ * Meta-Cognition Engine — Layer 4 (test fixture)
+ *
+ * NOTE: This standalone class is used by tests only.
+ * The runtime plugin (src/index.ts) inlines equivalent reflection logic
+ * and uses tryLLMComplete for LLM lesson generation.
  *
  * After a turn ends, review the decision path, extract reusable lessons.
  * Writes to Experience Store's `lesson` field.

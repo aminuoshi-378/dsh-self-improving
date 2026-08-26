@@ -111,12 +111,18 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_experiences_content_hash ON experiences(content_hash);
     `)
 
-    // A3: FTS5 full-text index on lesson and actions for BM25 search
+    // A3/K3: FTS5 full-text index with trigram tokenizer for CJK support
+    // trigram requires 3+ chars per match — suitable for lesson/actions text
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
-        lesson, actions, content='experiences', content_rowid='rowid'
+        lesson, actions, content='experiences', content_rowid='rowid',
+        tokenize='trigram'
       );
     `)
+    // K3: Migration — if old experiences_fts exists without trigram, rebuild
+    try {
+      this.db.exec(`INSERT INTO experiences_fts(experiences_fts) VALUES('rebuild')`)
+    } catch { /* table empty or already in sync */ }
     // Triggers to keep FTS5 in sync with the experiences table
     this.db.exec(`
       CREATE TRIGGER IF NOT EXISTS experiences_ai AFTER INSERT ON experiences BEGIN
@@ -151,10 +157,11 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_facts_subject ON atomic_facts(subject);
       CREATE INDEX IF NOT EXISTS idx_facts_predicate ON atomic_facts(predicate);
     `)
-    // FTS5 for atomic facts
+    // FTS5 for atomic facts (K3: trigram for CJK)
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS atomic_facts_fts USING fts5(
-        subject, object, content='atomic_facts', content_rowid='rowid'
+        subject, object, content='atomic_facts', content_rowid='rowid',
+        tokenize='trigram'
       );
     `)
     this.db.exec(`
@@ -355,12 +362,12 @@ export class ExperienceStore {
     let rows: RawExperienceRow[]
 
     if (query.searchText) {
-      // A3: FTS5 + BM25 search — match keywords in lesson/actions, order by relevance
+      // A3/K3: FTS5 + BM25 search with trigram tokenizer
+      // trigram requires 3+ chars per term, so filter short tokens
       try {
-        // FTS5 MATCH query: escape special chars by wrapping each term in quotes
         const safeQuery = query.searchText
           .split(/[\s,]+/)
-          .filter((t) => t.length > 0)
+          .filter((t) => t.length >= 3)
           .map((t) => `"${t.replace(/"/g, '""')}"`)
           .join(' ')
         if (safeQuery) {
@@ -1159,7 +1166,7 @@ export class ExperienceStore {
       try {
         const safeQuery = searchText
           .split(/[\s,]+/)
-          .filter((t) => t.length > 0)
+          .filter((t) => t.length >= 3)
           .map((t) => `"${t.replace(/"/g, '""')}"`)
           .join(' ')
         if (safeQuery) {

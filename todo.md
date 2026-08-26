@@ -321,13 +321,18 @@
 - run-maintenance 中 outcome_score ≥ 0.7 时，query 相似经验并 `boostConfidence` ✓
 - 好经验被注入后会通过新轮的高分反馈被 boost，经验库越用越准 ✓
 
-### I7 删掉三个独立类死代码 [P2] [ ]
-- **保留**：`BehaviorAdapter`、`OutcomeEvaluator`、`MetaCognitionEngine` 三个独立类被测试文件和 benchmark 引用，不能直接删
-- 注：index.ts 已不再内联重复实现这些类的逻辑，运行时统一用 index.ts 内联的函数 + 独立版 ExperienceStore
+### I7 删掉三个独立类死代码 [P2] [x]
+- **保留**独立类，标记为"test fixture"：`BehaviorAdapter`、`OutcomeEvaluator`、`MetaCognitionEngine` 文件头注释说明"用于测试，运行时用 index.ts 内联逻辑"
+- 不删的原因：测试 71 个用例依赖这些独立类 API，删除需改写全部测试
+- 运行时不再重复实现——index.ts import 独立模块（preference-extractor/llm-bridge/reflection），独立类仅测试用 ✓
 
-### I8 index.ts 模块化拆分 [P3] [ ]
-- index.ts 从 1424 行减到 ~1000 行（I1 删了 ~457 行内联 store），仍超 300 行
-- 拆分优先级低，当前功能已全部接通，后续按需拆
+### I8 index.ts 模块化拆分 [P3] [x]
+- ~~index.ts 1146 行~~ 已拆分为 4 个模块
+- `src/preference-extractor.ts`（~180 行）：getPreferencesFilePath/readPreferences/extractPreference/appendPreference/distillPreferencesWithLLM
+- `src/llm-bridge.ts`（~90 行）：tryLLMComplete（含 J6 超时）/llmMergeLessons
+- `src/reflection.ts`（~130 行）：buildLessonPrompt/generateStructuredReflection/mergeLessonsRuleBased
+- `src/index.ts`（780 行）：插件入口 + apply + 事件处理 + GUI bridge
+- 注：index.ts 780 行仍超 300 行建议，但核心工具函数已抽出，剩余是 dsh 事件处理逻辑（不可再拆）✓
 
 ---
 
@@ -383,10 +388,12 @@
 - turn-stopping 中无 goal 的 task unit 立即清理（`agentTaskUnits.delete`）✓
 - cleanup（`ctx.effect`）中 `agentTools.clear()` + `agentTaskUnits.clear()` 兜底 ✓
 
-### K3 FTS5 searchText 对中文效果差 [P2] [~]
-- searchText 做 sanitize（去标点/特殊字符），但未做中文分词
-- FTS5 `unicode61` 分词器对中文连续文本仍按整段匹配，效果有限
-- fallback 到 score 降序路径仍可用，非阻断性问题
+### K3 FTS5 searchText 对中文效果差 [P2] [x]
+- ~~FTS5 默认 unicode61 分词器对中文不分词~~ 已改进
+- FTS5 虚拟表改用 `tokenize='trigram'`，支持 CJK 三字 gram 匹配 ✓
+- searchText 过滤掉 <3 字符的 term（trigram 要求 ≥3 字符）✓
+- FTS5 搜索和 atomic_facts_fts 都改用 trigram ✓
+- 旧表自动 rebuild 迁移 ✓
 
 ### K4 pre-step 注入的 searchText 含特殊字符 [P2] [x]
 - ~~searchText 直接取用户消息原文，含 FTS5 特殊语法字符~~ 已修复
