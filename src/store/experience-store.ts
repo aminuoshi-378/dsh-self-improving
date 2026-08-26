@@ -36,6 +36,7 @@ const FORGET_CONFIDENCE_THRESHOLD = 0.2
 
 export class ExperienceStore {
   private db: DatabaseType
+  private storeCountSinceGC = 0
 
   constructor(dbPath: string = ':memory:') {
     const resolvedPath = dbPath.startsWith('~/')
@@ -300,14 +301,16 @@ export class ExperienceStore {
   }
 
   /**
-   * Increment reuse count and apply confidence decay.
+   * Increment reuse count and apply gradual confidence decay.
    * Called by the Behavior Adapter (Layer 2) when an experience is injected.
+   * N2: Use relative decay (multiply) instead of absolute reset, so that
+   * boostConfidence's accumulated +0.2 increments are not wiped out.
    */
   incrementReuse(id: string): void {
     const stmt = this.db.prepare(`
       UPDATE experiences
       SET reuse_count = reuse_count + 1,
-          confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1),
+          confidence = MAX(0.1, confidence * 0.9),
           last_injected_at = @now
       WHERE id = @id
     `)
@@ -348,15 +351,20 @@ export class ExperienceStore {
     const limit = query.limit ?? 10
     const minScore = query.minScore ?? 0.0
 
-    // Dynamic candidate set sizing (P4)
+    // Dynamic candidate set sizing (P4) + A6: quality-aware scaling
     const totalCount = this.count()
+    const avgScore = this.stats().avgScore
     let coarseLimit: number
     if (totalCount < 50) {
+      // Small store: return everything for best signal
       coarseLimit = Math.max(limit * 5, 50)
     } else if (totalCount < 200) {
-      coarseLimit = 20
+      // A6: When avg score is high, shrink candidate pool (fewer needed to find value)
+      // When low, expand it (need more candidates to find something useful)
+      coarseLimit = avgScore > 0.7 ? 15 : 25
     } else {
-      coarseLimit = 50
+      // A6: Same principle at larger scale
+      coarseLimit = avgScore > 0.7 ? 40 : 60
     }
 
     // Stage 1: Coarse filter
@@ -372,21 +380,29 @@ export class ExperienceStore {
           .map((t) => `"${t.replace(/"/g, '""')}"`)
           .join(' ')
         if (safeQuery) {
-          const ftsRows = this.db.prepare(`
+          // O4: Include taskPattern filter in FTS5 query
+          let ftsSql = `
             SELECT e.* FROM experiences e
             JOIN experiences_fts f ON e.rowid = f.rowid
             WHERE experiences_fts MATCH @matchText
               AND e.outcome_score >= @minScore
-              AND e.merged = 0
-            ORDER BY bm25(experiences_fts) ASC
-            LIMIT @fetchLimit
-          `).all({ matchText: safeQuery, minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
-          rows = ftsRows
+              AND e.merged = 0`
+          const ftsParams: Record<string, unknown> = { matchText: safeQuery, minScore, fetchLimit: coarseLimit }
+          if (query.taskPattern) {
+            ftsSql += ` AND (e.task_pattern = @taskPattern OR e.task_pattern IS NULL)`
+            ftsParams.taskPattern = query.taskPattern
+          }
+          ftsSql += ` ORDER BY bm25(experiences_fts) ASC LIMIT @fetchLimit`
+          rows = this.db.prepare(ftsSql).all(ftsParams) as RawExperienceRow[]
         } else {
-          rows = this.db.prepare(`
-            SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0
-            ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit
-          `).all({ minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
+          let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
+          const params: Record<string, unknown> = { minScore, fetchLimit: coarseLimit }
+          if (query.taskPattern) {
+            sql += ` AND (task_pattern = @taskPattern OR task_pattern IS NULL)`
+            params.taskPattern = query.taskPattern
+          }
+          sql += ` ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit`
+          rows = this.db.prepare(sql).all(params) as RawExperienceRow[]
         }
       } catch {
         // FTS5 not available or query syntax error — fall back to SQL filter
@@ -529,7 +545,7 @@ export class ExperienceStore {
     const row = this.db.prepare(`
       SELECT
         COUNT(*) as total,
-        COALESCE(AVG(outcome_score), 0) as avgScore,
+        COALESCE(AVG(CASE WHEN merged = 0 THEN outcome_score END), 0) as avgScore,
         SUM(CASE WHEN user_feedback = 'positive' THEN 1 ELSE 0 END) as positiveCount,
         SUM(CASE WHEN user_feedback = 'negative' THEN 1 ELSE 0 END) as negativeCount,
         SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons,
@@ -586,82 +602,86 @@ export class ExperienceStore {
    *     Never evict: difficulty=high with lesson
    */
   private enforceRetention(): void {
-    // A5: Active forgetting — proactively clean low-value, low-confidence experiences
-    // Runs before generational GC to remove noise independent of capacity pressure
-    this.activeForget()
+    // R5: Wrap GC operations in a transaction for atomicity
+    const txn = this.db.transaction(() => {
+      // P1: activeForget runs every time (indexed, fast), TTL throttled (full-table UPDATE)
+      this.activeForget()
 
-    // A2: TTL — downgrade stale old-gen experiences to young gen if not injected in TTL_DAYS
-    // This gives stale experiences a chance to be re-evaluated (and possibly evicted in next Minor GC)
-    this.applyTTL()
+      this.storeCountSinceGC++
+      if (this.storeCountSinceGC >= 10) {
+        this.storeCountSinceGC = 0
+        this.applyTTL()
+      }
 
-    // --- Minor GC: young generation ---
-    const youngCount = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM experiences WHERE generation = 0',
-    ).get() as { c: number }).c
+      // --- Minor GC: young generation ---
+      const youngCount = (this.db.prepare(
+        'SELECT COUNT(*) as c FROM experiences WHERE generation = 0',
+      ).get() as { c: number }).c
 
-    if (youngCount > YOUNG_GEN_MAX) {
-      // Promote survivors first
-      this.promoteYoungGen()
+      if (youngCount > YOUNG_GEN_MAX) {
+        // Promote survivors first
+        this.promoteYoungGen()
 
-      // Then evict low quality from young gen
-      const toEvict = youngCount - YOUNG_GEN_MAX
-      this.db.prepare(`
-        DELETE FROM experiences
-        WHERE id IN (
-          SELECT id FROM experiences
-          WHERE generation = 0
-            AND merged = 0
-          ORDER BY
-            CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
-            CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
-            outcome_score ASC,
-            created_at ASC
-          LIMIT @toEvict
-        )
-      `).run({ toEvict })
-    }
+        // Then evict low quality from young gen
+        const toEvict = youngCount - YOUNG_GEN_MAX
+        this.db.prepare(`
+          DELETE FROM experiences
+          WHERE id IN (
+            SELECT id FROM experiences
+            WHERE generation = 0
+              AND merged = 0
+            ORDER BY
+              CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
+              CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
+              outcome_score ASC,
+              created_at ASC
+            LIMIT @toEvict
+          )
+        `).run({ toEvict })
+      }
 
-    // --- Major GC: old generation ---
-    const oldCount = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
-    ).get() as { c: number }).c
-
-    if (oldCount > OLD_GEN_MAX) {
-      const toEvict = oldCount - OLD_GEN_MAX
-      // Evict by quality priority, but never evict high difficulty with lesson
-      this.db.prepare(`
-        DELETE FROM experiences
-        WHERE id IN (
-          SELECT id FROM experiences
-          WHERE generation = 1
-            AND NOT (difficulty = 'high' AND lesson IS NOT NULL)
-          ORDER BY
-            CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
-            CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
-            CASE WHEN outcome_score < 0.5 THEN 0 ELSE 1 END,
-            CASE WHEN merged = 1 THEN 0 ELSE 1 END,
-            outcome_score ASC,
-            created_at ASC
-          LIMIT @toEvict
-        )
-      `).run({ toEvict })
-
-      // If still over (all remaining are high-difficulty with lessons), evict lowest score
-      const remainingOld = (this.db.prepare(
+      // --- Major GC: old generation ---
+      const oldCount = (this.db.prepare(
         'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
       ).get() as { c: number }).c
-      if (remainingOld > OLD_GEN_MAX) {
+
+      if (oldCount > OLD_GEN_MAX) {
+        const toEvict = oldCount - OLD_GEN_MAX
         this.db.prepare(`
           DELETE FROM experiences
           WHERE id IN (
             SELECT id FROM experiences
             WHERE generation = 1
-            ORDER BY outcome_score ASC
-            LIMIT @extra
+              AND NOT (difficulty = 'high' AND lesson IS NOT NULL)
+            ORDER BY
+              CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
+              CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
+              CASE WHEN outcome_score < 0.5 THEN 0 ELSE 1 END,
+              CASE WHEN merged = 1 THEN 0 ELSE 1 END,
+              outcome_score ASC,
+              created_at ASC
+            LIMIT @toEvict
           )
-        `).run({ extra: remainingOld - OLD_GEN_MAX })
+        `).run({ toEvict })
+
+        // If still over, evict lowest score
+        const remainingOld = (this.db.prepare(
+          'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
+        ).get() as { c: number }).c
+        if (remainingOld > OLD_GEN_MAX) {
+          this.db.prepare(`
+            DELETE FROM experiences
+            WHERE id IN (
+              SELECT id FROM experiences
+              WHERE generation = 1
+              ORDER BY outcome_score ASC
+              LIMIT @extra
+            )
+          `).run({ extra: remainingOld - OLD_GEN_MAX })
+        }
       }
-    }
+    })
+    txn()
   }
 
   /**
@@ -769,14 +789,21 @@ export class ExperienceStore {
   computeContentHash(actions: string, workspaceDigest: string | null): string | null {
     try {
       const parsed = JSON.parse(actions)
-      const tools = (parsed.tools ?? []) as { name: string; success: boolean }[]
-      if (!Array.isArray(tools) || tools.length === 0) return null
+      const rawTools = parsed.tools ?? []
+      if (!Array.isArray(rawTools) || rawTools.length === 0) return null
+      // O3: Normalize tool entries — handle both {name,success} and {tool,ok} formats
+      // Q2: Filter out entries with no valid tool name (was broken by `|| true`)
+      const tools = rawTools.map((t: any) => {
+        const name = t?.name ?? t?.tool
+        const success = t?.success ?? t?.ok
+        return { name: typeof name === 'string' ? name : '', success: success !== false }
+      }).filter((t: { name: string }) => t.name.length > 0)
+      if (tools.length === 0) return null
       // Format: toolName:success,toolName:success,...|workspace
-      const toolStr = tools.map((t) => `${t.name}:${t.success}`).join(',')
+      const toolStr = tools.map((t: { name: string; success: boolean }) => `${t.name}:${t.success}`).join(',')
       const input = `${toolStr}|${workspaceDigest ?? ''}`
       return createHash('sha1').update(input).digest('hex').slice(0, 16)
     } catch {
-      // If actions isn't valid JSON, return null to fall back to context_hash dedup
       return null
     }
   }
@@ -831,6 +858,16 @@ export class ExperienceStore {
   // -------------------------------------------------------------------------
 
   private rowToRecord(row: RawExperienceRow): ExperienceRecord {
+    // O1: Safe JSON.parse with fallback for corrupted data
+    let toolsUsed: string[] | null = null
+    if (row.tools_used) {
+      try { toolsUsed = JSON.parse(row.tools_used) } catch { toolsUsed = null }
+    }
+    let tags: string[] | null = null
+    if (row.tags) {
+      try { tags = JSON.parse(row.tags) } catch { tags = null }
+    }
+
     return {
       id: row.id,
       sessionId: row.session_id,
@@ -841,7 +878,7 @@ export class ExperienceStore {
       contextHash: row.context_hash,
       contentHash: row.content_hash ?? null,
       taskPattern: row.task_pattern,
-      toolsUsed: row.tools_used ? JSON.parse(row.tools_used) : null,
+      toolsUsed,
       workspaceDigest: row.workspace_digest,
       actions: row.actions,
       outcomeScore: row.outcome_score,
@@ -851,7 +888,7 @@ export class ExperienceStore {
       generation: row.generation ?? 0,
       lastInjectedAt: row.last_injected_at ?? null,
       merged: Boolean(row.merged),
-      tags: row.tags ? JSON.parse(row.tags) : null,
+      tags,
       confidence: row.confidence,
       reuseCount: row.reuse_count,
       source: row.source ?? 'model-inferred',
@@ -921,46 +958,52 @@ export class ExperienceStore {
     const id = ulid()
     const contextHash = this.computeContextHash(null, toolsUsed, null)
 
-    this.db.prepare(`
-      INSERT INTO experiences (
-        id, session_id, turn_id, created_at,
-        context_hash, task_pattern, tools_used, workspace_digest,
-        actions, outcome_score, user_feedback, lesson,
-        difficulty, generation, last_injected_at, merged,
-        tags, confidence, reuse_count
-      ) VALUES (
-        @id, @sessionId, @turnId, @createdAt,
-        @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
-        @actions, @outcomeScore, @userFeedback, @lesson,
-        @difficulty, @generation, @lastInjectedAt, @merged,
-        @tags, @confidence, @reuseCount
-      )
-    `).run({
-      id,
-      sessionId: 'merge',
-      turnId: `merge-${Date.now()}`,
-      createdAt: Date.now(),
-      contextHash,
-      taskPattern: null,
-      toolsUsed: JSON.stringify(toolsUsed),
-      workspaceDigest: null,
-      actions: JSON.stringify({ merged_from: sourceIds }),
-      outcomeScore: 0.85,
-      userFeedback: 'none',
-      lesson: JSON.stringify(mergedLesson),
-      difficulty,
-      generation: 1, // Merged products go directly to old gen
-      lastInjectedAt: null,
-      merged: 0,
-      tags: JSON.stringify(['merged']),
-      confidence: 1.0,
-      reuseCount: 0,
-    })
+    // R4: Wrap INSERT + markMerged in a transaction for atomicity
+    const txn = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO experiences (
+          id, session_id, turn_id, created_at,
+          context_hash, content_hash, task_pattern, tools_used, workspace_digest,
+          actions, outcome_score, user_feedback, lesson,
+          difficulty, generation, last_injected_at, merged,
+          tags, confidence, reuse_count, source
+        ) VALUES (
+          @id, @sessionId, @turnId, @createdAt,
+          @contextHash, @contentHash, @taskPattern, @toolsUsed, @workspaceDigest,
+          @actions, @outcomeScore, @userFeedback, @lesson,
+          @difficulty, @generation, @lastInjectedAt, @merged,
+          @tags, @confidence, @reuseCount, @source
+        )
+      `).run({
+        id,
+        sessionId: 'merge',
+        turnId: `merge-${Date.now()}`,
+        createdAt: Date.now(),
+        contextHash,
+        contentHash: `merge-${contextHash}`,
+        taskPattern: null,
+        toolsUsed: JSON.stringify(toolsUsed),
+        workspaceDigest: null,
+        actions: JSON.stringify({ merged_from: sourceIds }),
+        outcomeScore: 0.85,
+        userFeedback: 'none',
+        lesson: JSON.stringify(mergedLesson),
+        difficulty,
+        generation: 1,
+        lastInjectedAt: null,
+        merged: 0,
+        tags: JSON.stringify(['merged']),
+        confidence: 1.0,
+        reuseCount: 0,
+        source: 'merged',
+      })
 
-    // Mark source records as merged
-    for (const sourceId of sourceIds) {
-      this.markMerged(sourceId)
-    }
+      // Mark source records as merged
+      for (const sourceId of sourceIds) {
+        this.markMerged(sourceId)
+      }
+    })
+    txn()
 
     return id
   }
@@ -1216,10 +1259,11 @@ export class ExperienceStore {
       const conflictRows = this.db.prepare(`
         SELECT * FROM atomic_facts
         WHERE subject = ? AND predicate = ? AND evicted = 0
-        ORDER BY confidence DESC, updated_at DESC
       `).all(subject, predicate) as RawFactRow[]
       const conflicts = conflictRows.map((r) => this.rowToFact(r))
-      // B1: Sort by source weight (higher = more authoritative), then confidence
+      // B1: Sort by source weight (higher = more authoritative), then confidence.
+      // This is the single authoritative ordering — no SQL ORDER BY above so the
+      // first item is deterministically the highest source-weight fact.
       conflicts.sort((a, b) => {
         const w = (SOURCE_WEIGHTS[b.source] ?? 0) - (SOURCE_WEIGHTS[a.source] ?? 0)
         if (w !== 0) return w
@@ -1257,6 +1301,11 @@ export class ExperienceStore {
   clear(): void {
     this.db.exec('DELETE FROM experiences')
     this.db.exec('DELETE FROM atomic_facts')
+    // P6: Rebuild FTS tables to remove stale index entries
+    try {
+      this.db.exec(`INSERT INTO experiences_fts(experiences_fts) VALUES('rebuild')`)
+      this.db.exec(`INSERT INTO atomic_facts_fts(atomic_facts_fts) VALUES('rebuild')`)
+    } catch { /* FTS tables may not exist yet */ }
   }
 }
 
@@ -1291,6 +1340,7 @@ const SOURCE_WEIGHTS: Record<string, number> = {
   'user-confirmed': 4,
   'tool-derived': 3,
   'model-inferred': 2,
+  'merged': 2,   // P7: Same weight as model-inferred (consolidated but not user-confirmed)
   'chat-mention': 1,
 }
 

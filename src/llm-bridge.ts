@@ -10,6 +10,7 @@ import type { ExperienceRecord } from './types/index.js'
  * J6: Includes 30s timeout via AbortController.
  */
 export async function tryLLMComplete(ctx: any, prompt: string): Promise<string | null> {
+  const chunks: string[] = []
   try {
     const llm = ctx.get?.('llm')
     if (!llm || typeof llm.stream !== 'function') return null
@@ -19,7 +20,6 @@ export async function tryLLMComplete(ctx: any, prompt: string): Promise<string |
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
-      const chunks: string[] = []
       for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }], signal: controller.signal })) {
         if (chunk?.type === 'text-delta' && chunk.text) {
           chunks.push(chunk.text)
@@ -32,7 +32,8 @@ export async function tryLLMComplete(ctx: any, prompt: string): Promise<string |
       clearTimeout(timeout)
     }
   } catch {
-    return null
+    // P9: Return partial result if we got some chunks before the error/timeout
+    return chunks.length > 0 ? chunks.join('') : null
   }
 }
 

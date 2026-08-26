@@ -190,7 +190,7 @@ export function apply(ctx: Context, config: Config): void {
           if (goal.phase === 'complete') goalProgress = 'advanced'
           else if (goal.phase === 'blocked') goalProgress = 'stalled'
           else if (goal.phase === 'active') goalProgress = 'advanced'
-          else if (goal.phase === 'paused') goalProgress = 'stalled'
+          else if (goal.phase === 'paused') goalProgress = 'none'  // P2: paused ≠ stalled (user may switch tasks)
         }
       } catch { /* goal service may not be available */ }
     }
@@ -228,6 +228,7 @@ export function apply(ctx: Context, config: Config): void {
 
     // P1: Implicit negative feedback detection
     // Check for: user abort, user correction (step > 1 with user message after agent reply)
+    // D3: Also check for user restating the task (high text similarity to previous turn's user message)
     let implicitNegative = false
     try {
       const events = agent.session.events ?? []
@@ -245,6 +246,37 @@ export function apply(ctx: Context, config: Config): void {
         )
         if (userMsgsInTurn.length > 0) {
           implicitNegative = true
+        }
+      }
+      // D3: Check for user restating the task — high similarity to previous turn's first user message
+      if (!implicitNegative && turn > 1) {
+        const currentMsgs = events.filter((e: any) =>
+          e.type === 'user/message' && e.data?.turn === turn &&
+          e.data?.source?.plugin !== 'repeat-tool-reminder',
+        )
+        const prevMsgs = events.filter((e: any) =>
+          e.type === 'user/message' && e.data?.turn === turn - 1 &&
+          e.data?.source?.plugin !== 'repeat-tool-reminder',
+        )
+        if (currentMsgs.length > 0 && prevMsgs.length > 0) {
+          const curText = String(currentMsgs[0].data?.text ?? currentMsgs[0].data?.content ?? '')
+          const prevText = String(prevMsgs[0].data?.text ?? prevMsgs[0].data?.content ?? '')
+          if (curText && prevText) {
+            // Simple word-overlap similarity (no LLM needed, deterministic)
+            const curWords = new Set(curText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
+            const prevWords = new Set(prevText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
+            if (curWords.size > 0 && prevWords.size > 0) {
+              let overlap = 0
+              for (const w of curWords) {
+                if (prevWords.has(w)) overlap++
+              }
+              const similarity = overlap / Math.min(curWords.size, prevWords.size)
+              // >0.7 word overlap → user is likely restating the same task
+              if (similarity > 0.7) {
+                implicitNegative = true
+              }
+            }
+          }
         }
       }
     } catch { /* ignore */ }
@@ -308,9 +340,19 @@ export function apply(ctx: Context, config: Config): void {
     try {
       const events = agent.session.events ?? []
       const firstUserMsg = events.find((e: any) => e.type === 'user/message' && e.data?.turn === turn)
-      const msgText = firstUserMsg?.data?.text ?? firstUserMsg?.data?.content ?? ''
+      // Q1: Handle ContentPart[] — same as O8 fix in pre-step
+      let msgText = ''
+      const rawContent = firstUserMsg?.data?.text ?? firstUserMsg?.data?.content ?? ''
+      if (typeof rawContent === 'string') {
+        msgText = rawContent
+      } else if (Array.isArray(rawContent)) {
+        msgText = rawContent
+          .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
+          .map((p: any) => typeof p === 'string' ? p : p.text)
+          .join(' ')
+      }
       if (msgText) {
-        taskPattern = inferTaskPattern(String(msgText))
+        taskPattern = inferTaskPattern(msgText)
       }
 
       // A1-a: Extract explicit preference from user message
@@ -377,6 +419,11 @@ export function apply(ctx: Context, config: Config): void {
 
     // P2: Synchronously generate lesson (don't wait for maintenance)
     if (config.metaCognitionEnabled) {
+      // Drop oldest if queue is full (maintenance delayed, e.g. headless mode)
+      if (pendingReflections.length >= MAX_PENDING_REFLECTIONS) {
+        pendingReflections.shift()
+        log('pending reflections queue full, dropped oldest entry')
+      }
       pendingReflections.push({
         expId,
         actions,
@@ -450,15 +497,25 @@ export function apply(ctx: Context, config: Config): void {
 
       log(`agent/pre-step — turn=${turn} step=${step} (injecting)`)
 
-      try {
-        // Query experience store for similar past turns
-        const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : undefined
+      // Query experience store for similar past turns
+      const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : undefined
 
         // P5: Infer task pattern from current messages for better retrieval
         const firstMsg = payload.messages?.[0]
-        const msgText = firstMsg && typeof firstMsg === 'object'
-          ? String((firstMsg as any).content ?? (firstMsg as any).text ?? '')
-          : ''
+        // O8: Handle ContentPart[] — extract text from array items instead of String() on array
+        let msgText = ''
+        if (firstMsg && typeof firstMsg === 'object') {
+          const raw = (firstMsg as any).content ?? (firstMsg as any).text ?? ''
+          if (typeof raw === 'string') {
+            msgText = raw
+          } else if (Array.isArray(raw)) {
+            // ContentPart[] — extract text parts
+            msgText = raw
+              .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
+              .map((p: any) => typeof p === 'string' ? p : p.text)
+              .join(' ')
+          }
+        }
         const currentTaskPattern = msgText ? inferTaskPattern(msgText) : null
 
         // I3/K3/K4: Sanitize searchText for FTS5 — extract keywords, strip special chars
@@ -479,12 +536,13 @@ export function apply(ctx: Context, config: Config): void {
         })
 
         // Always call next() first (waterfall contract: never short-circuit)
+        // O2: next() called outside try — catch block returns decision instead of calling next() again
         const decision = await next()
 
-        if (records.length > 0) {
+        try {
+          if (records.length > 0) {
           // P5: Sort by task pattern match, difficulty priority, then outcome score
           const sorted = [...records].sort((a, b) => {
-            // P5: Same task pattern gets priority
             if (currentTaskPattern) {
               const aMatch = a.taskPattern === currentTaskPattern ? 1 : 0
               const bMatch = b.taskPattern === currentTaskPattern ? 1 : 0
@@ -494,26 +552,54 @@ export function apply(ctx: Context, config: Config): void {
             const dp = diffPriority(b.difficulty) - diffPriority(a.difficulty)
             return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
           })
+          // R1: best by sorted order (highest priority), worst by pure outcomeScore (lowest)
           const best = sorted[0]
-          const worst = sorted.length > 1 ? sorted[sorted.length - 1] : null
+          const worstByScore = [...records].sort((a, b) => a.outcomeScore - b.outcomeScore)[0]
+          const worst = (worstByScore && worstByScore.id !== best.id) ? worstByScore : null
 
           // P3: Dynamic injection — allocate by difficulty
           const high = sorted.filter(r => r.difficulty === 'high').slice(0, 5)
           const medium = sorted.filter(r => r.difficulty === 'medium').slice(0, 2)
           const low = sorted.filter(r => r.difficulty === 'low')
             .slice(0, Math.max(0, 7 - high.length - medium.length))
-          const selected = [...high, ...medium, ...low]
+          let selected = [...high, ...medium, ...low]
+
+          // E3: Token budget control — total injected text ≤ 8000 chars (~2000 tokens)
+          // R2: No-lesson records don't consume budget (align with BehaviorAdapter)
+          const MAX_INJECT_CHARS = 8000
+          let charBudget = MAX_INJECT_CHARS
+          const budgeted: typeof selected = []
+          for (const rec of selected) {
+            const lessonText = extractLessonText(rec.lesson) ?? ''
+            if (lessonText.length === 0) {
+              // No lesson — add without consuming budget
+              budgeted.push(rec)
+            } else if (lessonText.length <= charBudget) {
+              budgeted.push(rec)
+              charBudget -= lessonText.length
+            }
+          }
+          // R3: Only use budgeted if it's non-empty; if empty, skip injection entirely
+          if (budgeted.length > 0) {
+            selected = budgeted
+          } else {
+            // All records exceeded budget — don't inject, don't incrementReuse
+            selected = []
+          }
+
+          if (selected.length === 0) {
+            log(`pre-step: all ${records.length} records exceeded token budget, skipping injection`)
+            return decision
+          }
 
           log(`injecting ${selected.length} past experiences into pre-step (best score ${best.outcomeScore.toFixed(2)})`)
 
           const lines: string[] = ['## Past Experience (advisory)', '']
           if (best.outcomeScore >= 0.6) {
-            // P4: Extract reusable_lesson from structured JSON
             const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
             lines.push(`- **What worked**: ${lesson}`)
           }
-          // E1: Only inject "what failed" if worst is a different record than best
-          if (worst && worst.id !== best.id && worst.outcomeScore <= 0.4) {
+          if (worst && worst.outcomeScore <= 0.4) {
             const lesson = extractLessonText(worst.lesson) ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
             lines.push(`- **What failed**: ${lesson}`)
           }
@@ -527,7 +613,7 @@ export function apply(ctx: Context, config: Config): void {
             source: { ...PLUGIN_SOURCE, form: 'notice', summary: 'past experience' },
           })
 
-          // Increment reuse counts
+          // Increment reuse counts — only for records actually being injected
           for (const rec of selected) {
             store.incrementReuse(rec.id)
           }
@@ -545,9 +631,9 @@ export function apply(ctx: Context, config: Config): void {
 
         return decision
       } catch (err) {
-        // Never break the agent loop — delegate to next() on any error
+        // O2: next() already called above — return decision instead of calling next() again
         log(`pre-step injection error: ${(err as Error).message}`)
-        return next()
+        return decision
       }
     })
   }
@@ -570,11 +656,13 @@ export function apply(ctx: Context, config: Config): void {
           lines.push('')
         }
 
-        // J4: Inject atomic facts for current workspace
+        // J4: Inject atomic facts (effective/failed tool sequences)
+        // Note: text() callback has no agent context, so we can't filter by current workspace.
+        // Limit to top 3 effective + top 3 failed to avoid flooding the system prompt.
         try {
           const facts = store.queryFacts()
-          const effective = facts.filter(f => f.predicate === 'effective-tool-sequence')
-          const failed = facts.filter(f => f.predicate === 'failed-tool-sequence')
+          const effective = facts.filter(f => f.predicate === 'effective-tool-sequence').slice(0, 3)
+          const failed = facts.filter(f => f.predicate === 'failed-tool-sequence').slice(0, 3)
           if (effective.length > 0 || failed.length > 0) {
             if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
             for (const f of effective) {
@@ -620,6 +708,8 @@ export function apply(ctx: Context, config: Config): void {
     difficulty?: 'low' | 'medium' | 'high'
     injectedIds?: string[] // J7: ids of experiences injected in the turn that produced this reflection
   }
+  // Cap the queue to prevent unbounded growth when maintenance is delayed (e.g. headless mode)
+  const MAX_PENDING_REFLECTIONS = 100
   const pendingReflections: PendingReflection[] = []
 
   // Process reflections during maintenance
@@ -748,8 +838,8 @@ export function apply(ctx: Context, config: Config): void {
           log(`GUI export — sent ${exportData.length} records`)
         }
 
-        // Handle import request
-        if (next.importData) {
+        // P8: Use else-if — export and import are mutually exclusive operations
+        else if (next.importData) {
           try {
             const data = JSON.parse(next.importData)
             const result = store.importExperiences(data)

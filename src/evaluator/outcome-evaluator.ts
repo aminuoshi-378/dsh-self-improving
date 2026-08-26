@@ -170,7 +170,8 @@ export class OutcomeEvaluator {
       case 'negative':
         return 0.0
       case 'none':
-        return 0.5
+        // O7: Align with index.ts runtime — neutral = 0.6 (not 0.5)
+        return 0.6
     }
   }
 

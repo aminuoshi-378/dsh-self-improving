@@ -128,8 +128,9 @@ test('mixed turn gets middle score', () => {
   const outcome = evaluator.evaluate(data)
 
   // P0: 2 tools → stepCount=2, stepEfficiency=0.95, hasFailures → difficulty='high'
-  // Expected: 0.3*0.3 + 0.5*0.2 + 0.95*0.25 + 0.15 + 0.5*0.1 = 0.6275
-  assertClose(outcome.outcomeScore, 0.6275, 0.01, 'mixed turn should score ~0.63')
+  // O7: neutral feedback = 0.6 (aligned with index.ts runtime)
+  // Expected: 0.3*0.3 + 0.5*0.2 + 0.95*0.25 + 0.15 + 0.6*0.1 = 0.6375
+  assertClose(outcome.outcomeScore, 0.6375, 0.01, 'mixed turn should score ~0.64')
   assert(outcome.toolCallCount === 2, 'toolCallCount should be 2')
   assertClose(outcome.toolSuccessRate, 0.5, 0.01, 'toolSuccessRate should be 0.5')
 
@@ -165,8 +166,9 @@ test('multiple guard triggers cap at guard weight', () => {
 
   // P0: 1 tool → stepCount=1, stepEfficiency=1.0
   // guard penalty = min(4 * 0.1, 0.15) = 0.15 → guard component = 0
-  // Expected: 0.3*0.3 + 1.0*0.2 + 1.0*0.25 + 0 + 0.5*0.1 = 0.59
-  assertClose(outcome.outcomeScore, 0.59, 0.01, 'should cap guard penalty at weight')
+  // O7: neutral feedback = 0.6
+  // Expected: 0.3*0.3 + 1.0*0.2 + 1.0*0.25 + 0 + 0.6*0.1 = 0.61
+  assertClose(outcome.outcomeScore, 0.61, 0.01, 'should cap guard penalty at weight')
 
   store.close()
 })
@@ -235,8 +237,9 @@ test('turn with no tool calls', () => {
   const outcome = evaluator.evaluate(data)
 
   // P0: 0 tools → stepCount=0, stepEfficiency=1.0, difficulty='low'
-  // Expected: 0.5*0.3 + 0*0.2 + 1.0*0.25 + 0.15 + 0.5*0.1 = 0.6
-  assertClose(outcome.outcomeScore, 0.6, 0.01, 'empty turn should score ~0.6')
+  // O7: neutral feedback = 0.6
+  // Expected: 0.5*0.3 + 0*0.2 + 1.0*0.25 + 0.15 + 0.6*0.1 = 0.61
+  assertClose(outcome.outcomeScore, 0.61, 0.01, 'empty turn should score ~0.61')
   assert(outcome.toolCallCount === 0, 'toolCallCount should be 0')
   assert(outcome.toolSuccessRate === 0.0, 'toolSuccessRate should be 0 with no calls')
 

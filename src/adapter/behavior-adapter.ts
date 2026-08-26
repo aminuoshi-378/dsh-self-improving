@@ -127,13 +127,20 @@ export class BehaviorAdapter {
   }
 
   /**
-   * P3: Compute dynamic limit based on store size.
+   * P3/A6: Compute dynamic limit based on store size and quality.
+   * - Small store (<50): return all (up to 10) for best signal
+   * - Medium store (50-200): tighter limit when avg score high (quality good, fewer needed)
+   * - Large store (>200): wider net when avg score low (need more candidates to find value)
    */
   private computeDynamicLimit(): number {
     const stats = this.store.stats()
     if (stats.total < 50) return 10
-    if (stats.total < 200) return 10
-    return 10
+    // A6: When average quality is high, shrink the candidate pool (fewer needed)
+    // When quality is low, expand it (more candidates to find something useful)
+    if (stats.total < 200) {
+      return stats.avgScore > 0.7 ? 8 : 12
+    }
+    return stats.avgScore > 0.7 ? 8 : 15
   }
 
   /**

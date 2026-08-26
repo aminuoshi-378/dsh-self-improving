@@ -49,6 +49,8 @@ export class MetaCognitionEngine {
   private queue: PendingReflection[] = []
   private enabled: boolean = true
   private reflectionCount = 0
+  // P5: Cap queue to prevent unbounded growth when processQueue is delayed
+  private static readonly MAX_QUEUE_SIZE = 100
 
   constructor(store: ExperienceStore, llm: LLMClient | null = null) {
     this.store = store
@@ -76,7 +78,10 @@ export class MetaCognitionEngine {
     difficulty?: 'low' | 'medium' | 'high'
   }): void {
     if (!this.enabled) return
-
+    // P5: Drop oldest if queue is full
+    if (this.queue.length >= MetaCognitionEngine.MAX_QUEUE_SIZE) {
+      this.queue.shift()
+    }
     this.queue.push(entry)
   }
 
@@ -249,13 +254,24 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   // -------------------------------------------------------------------------
 
   private parseActions(actionsJson: string): {
-    tools?: { tool: string; ok: boolean; ms: number }[]
+    tools?: { tool: string; ok: boolean; ms?: number }[]
     guards?: { guard: string; reason: string }[]
     goalProgress?: string
     feedback?: string
   } {
     try {
-      return JSON.parse(actionsJson)
+      const parsed = JSON.parse(actionsJson)
+      // Normalize tool entries: runtime uses {name, success}, evaluator uses {tool, ok}
+      if (Array.isArray(parsed.tools)) {
+        parsed.tools = parsed.tools.map((t: any) => {
+          if (!t || typeof t !== 'object') return undefined
+          const name = t.name ?? t.tool
+          const ok = t.success ?? t.ok
+          if (typeof name !== 'string') return undefined
+          return { tool: name, ok: ok !== false, ms: t.ms ?? 0 }
+        }).filter(Boolean)
+      }
+      return parsed
     } catch {
       return {}
     }
@@ -411,12 +427,20 @@ Respond with ONLY valid JSON:
 
   /**
    * When a new positive outcome confirms a past lesson, boost that lesson's confidence.
+   * Only boosts experiences that share tools with the current entry (actual similarity),
+   * not just any high-score experience in the store.
    */
   private boostSimilarExperiences(entry: PendingReflection): void {
-    const records = this.store.query({
+    // Use entry's tools to find genuinely similar experiences
+    const query: { limit: number; minScore: number; toolsUsed?: string[] } = {
       limit: 5,
       minScore: 0.6,
-    })
+    }
+    if (entry.toolsUsed && entry.toolsUsed.length > 0) {
+      query.toolsUsed = entry.toolsUsed
+    }
+
+    const records = this.store.query(query)
 
     for (const rec of records) {
       if (rec.id !== entry.experienceId) {

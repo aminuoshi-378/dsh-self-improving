@@ -233,14 +233,15 @@ test('confidence decays with reuse', () => {
   assertClose(rec1!.confidence, 0.9, 0.01, 'confidence should be 0.9 after 1 reuse')
   assert(rec1!.reuseCount === 1, 'reuseCount should be 1')
 
-  // After 5 reuses
+  // After 5 more reuses (total 6)
   store.incrementReuse(id)
   store.incrementReuse(id)
   store.incrementReuse(id)
   store.incrementReuse(id)
   store.incrementReuse(id)
   const rec5 = store.getById(id)
-  assertClose(rec5!.confidence, 0.4, 0.01, 'confidence should be 0.4 after 6 reuses')
+  // N2: relative decay (0.9^n) — 6 reuses → 0.9^6 = 0.531
+  assertClose(rec5!.confidence, 0.53, 0.02, 'confidence should be ~0.53 after 6 reuses')
   assert(rec5!.reuseCount === 6, 'reuseCount should be 6')
 
   // Confidence should not go below 0.1

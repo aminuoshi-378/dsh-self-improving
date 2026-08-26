@@ -216,9 +216,9 @@ test('A5: low-value experience is proactively forgotten', () => {
   })
 
   // Decay confidence by incrementing reuse count multiple times
-  // confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1)
-  // After 9 reuses: confidence = MAX(0.1, 1.0 - 10 * 0.1) = 0.1 < 0.2
-  for (let i = 0; i < 9; i++) {
+  // N2: confidence = MAX(0.1, 1.0 * 0.9^n)
+  // After 17 reuses: 0.9^17 = 0.167 < 0.2
+  for (let i = 0; i < 17; i++) {
     store.incrementReuse(id)
   }
 
@@ -283,11 +283,14 @@ test('A2: stale old-gen experience downgraded to young-gen after TTL', () => {
   store.db.prepare('UPDATE experiences SET created_at = ?, last_injected_at = ? WHERE id = ?')
     .run(staleTime, staleTime, id)
 
-  // Trigger enforceRetention (which calls applyTTL) by storing another experience
-  store.store(makeOutcome({ outcomeScore: 0.9 }), {
-    taskPattern: 'bugfix', toolsUsed: ['grep'], workspaceDigest: 'ws-2',
-    actions: JSON.stringify({ tools: [{ name: 'grep', success: true }] }),
-  })
+  // Trigger enforceRetention (which calls applyTTL) by storing enough experiences
+  // P1: TTL is throttled to run every 10 stores, so we need 10 stores to trigger it
+  for (let i = 0; i < 10; i++) {
+    store.store(makeOutcome({ outcomeScore: 0.9 }), {
+      taskPattern: 'bugfix', toolsUsed: ['grep'], workspaceDigest: `ws-${i}`,
+      actions: JSON.stringify({ tools: [{ name: 'grep', success: true }] }),
+    })
+  }
 
   // Should be downgraded to young gen (generation=0)
   rec = store.getById(id)

@@ -126,8 +126,8 @@
 ### A6 检索范围动态伸缩 [P4] [x]
 - ~~当前：query 固定返回 limit 条~~ 已实现动态候选集
 - 根据经验库总量动态调整候选集：<50 条全量精筛；50–200 条粗筛 top 20；>200 条粗筛 top 50 ✓
-- 代码位置：`experience-store.ts:248-256`
-- 注：粗筛质量高（avg > 0.8）缩小范围，质量低则扩大 — 未实现（仅按数量分档）
+- 代码位置：`experience-store.ts:354-368`
+- 质量动态伸缩已实现（M5）：50–200 条时 avgScore > 0.7 → coarseLimit 15（否则 25）；>200 条时 avgScore > 0.7 → coarseLimit 40（否则 60）✓
 
 ### A7 任务类型判断落值（A2 的前置依赖）[x]
 - ~~目标：让 `task_pattern` 从恒 NULL 变为可用的任务分类标签~~ 已实现
@@ -444,3 +444,208 @@
 - **数据管道已贯通**：原子事实提取（I4）→ 冲突检测（J2）→ systemPrompt 注入（J4）✓
 - **未实现的计划项**：Phase 6 自适应策略调整（agent/request 模型选择、tools/restrict 工具推荐、守卫阈值自适应）— 仍在计划中，未开始
 - **结论**：核心目标（跨会话学习闭环）已实现，L1 编译错误已修复，dist 产物已更新 ✓
+
+---
+
+## 域 M — 第五轮代码审查修复（2026-08-26）
+
+> 焦点：todo.md 中已标注的"注：未实现"子项 + 代码审查发现的实际缺陷。
+
+### M1 computeDynamicLimit 死代码修复 [P3] [x]
+- ~~behavior-adapter.ts 中 computeDynamicLimit 三个分支都返回 10，无动态效果~~ 已修复
+- 改为基于 store 质量动态调整：avgScore > 0.7 时缩小候选池（质量好不需要太多），avgScore 低时扩大（需要更多候选找有价值经验）✓
+
+### M2 boostSimilarExperiences 无相似性过滤 [P2] [x]
+- ~~MetaCognitionEngine.boostSimilarExperiences 查询时只传 minScore: 0.6，没有传 toolsUsed~~ 已修复
+- 现在传入 entry.toolsUsed 做真正的相似匹配，只 boost 工具序列相同的经验 ✓
+- 与 J7 运行时逻辑（只 boost injectedIds）保持一致 ✓
+
+### M3 pendingReflections 队列无上限 [P1] [x]
+- ~~pendingReflections 数组无上限，maintenance 长时间不触发时会无限增长~~ 已修复
+- 新增 MAX_PENDING_REFLECTIONS = 100 上限，满时丢弃最旧条目并记录日志 ✓
+
+### M4 D3 用户重述任务检测 [P1] [x]
+- ~~D3 只检测 step > 1，无文本相似度比较~~ 已实现
+- 新增词重叠相似度检测：当前 turn 用户消息与上一 turn 首条用户消息比较，词重叠 > 0.7 判为重述 → implicitNegative ✓
+- 使用简单 word-overlap（split + Set），无需 LLM，确定性 ✓
+
+### M5 A6 召回范围按经验库质量动态伸缩 [P4] [x]
+- ~~experience-store.ts query 中 coarseLimit 仅按数量分档，不根据 avgScore 调整~~ 已修复
+- 50-200 条时：avgScore > 0.7 → coarseLimit 15（质量好缩小范围），否则 25
+- >200 条时：avgScore > 0.7 → coarseLimit 40，否则 60 ✓
+
+### M6 E3 token 预算控制 [P3] [x]
+- ~~index.ts 注入处按 difficulty 分配条数但无总字符预算控制~~ 已修复
+- 新增 MAX_INJECT_CHARS = 8000 字符预算，逐条检查 lessonText 长度，超预算时截断 ✓
+- 与 behavior-adapter.ts 中的 token 预算逻辑一致 ✓
+
+### M7 CHANGELOG Node 引擎版本修正 [P2] [x]
+- ~~CHANGELOG [0.1.0] 记录 "Node 引擎：>=20.0.0"，与 package.json 的 >=22.0.0 不一致~~ 已修正 ✓
+
+---
+
+## 域 N — 第六轮代码审查修复（2026-08-26）
+
+> 焦点：数据格式兼容性、置信度逻辑一致性、性能和注入边界。
+
+### N1 MetaCognitionEngine.parseActions 工具格式不兼容 [P0] [x]
+- ~~parseActions 只解析 {tool,ok} 格式，运行时写入的是 {name,success}，工具名全部丢失~~ 已修复
+- 加入 normalizeToolEntry 逻辑：t.name ?? t.tool 提取工具名，t.success ?? t.ok 提取成功状态 ✓
+- 与 reflection.ts 中的 normalizeToolEntry 保持一致 ✓
+
+### N2 incrementReuse 置信度衰减覆盖 boostConfidence [P1] [x]
+- ~~incrementReuse 用绝对公式 1.0-(reuse_count+1)*0.1 重置 confidence，boostConfidence 的 +0.2 被覆盖~~ 已修复
+- 改为相对衰减 confidence * 0.9（每次注入衰减 10%），boost 的累积效果不再被重置 ✓
+- 最低仍保留 0.1 下限 ✓
+
+### N3 GUI 导入后统计刷新（核实无缺陷）[x]
+- 经核实，GUI 导入成功后已通过 guiScope.update({ stats: ... }) 推送新统计 ✓
+
+### N4 J4 原子事实注入无数量限制 [P2] [x]
+- ~~store.queryFacts() 无参数返回所有事实（最多 100 条），多工作区时淹没 system prompt~~ 已修复
+- 限制注入为 top 3 effective + top 3 failed，避免 system prompt 膨胀 ✓
+- 注：text() 回调无 agent 上下文，无法按当前工作区过滤，数量限制为最优可行方案 ✓
+
+### N5 distillPreferencesWithLLM 循环内重复读取文件 [P3] [x]
+- ~~每次迭代调用 readPreferences(prefPath) 检查去重，N 条偏好读 N 次文件~~ 已修复
+- 改为循环前读一次，写入后更新内存副本用于下次去重检查 ✓
+
+---
+
+## 域 O — 第七轮代码审查修复（2026-08-26）
+
+> 焦点：数据健壮性、去重正确性、搜索过滤、评分一致性、消息格式兼容。
+
+### O1 rowToRecord 中 JSON.parse 无异常保护 [P1] [x]
+- ~~row.tools_used 和 row.tags 的 JSON.parse 无 try-catch，单条损坏记录导致全部查询崩溃~~ 已修复
+- 改为 try-catch + fallback null ✓
+
+### O2 pre-step catch 块重复调用 next() [P1] [x]
+- ~~next() 在 try 块中调用后，catch 块又调用 next()，违反 waterfall 契约~~ 已修复
+- next() 调用移到 try 块前，catch 块直接返回 decision（不重复调 next）✓
+
+### O3 computeContentHash 不处理缺 name/success 的情况 [P1] [x]
+- ~~直接类型断言 {name,success}[]，遇到 {tool,ok} 格式时 name=undefined，生成无意义 hash~~ 已修复
+- 加入 normalizeToolEntry 逻辑，统一两种格式 ✓
+
+### O4 FTS5 搜索路径忽略 taskPattern 过滤 [P2] [x]
+- ~~FTS5 查询没有加 taskPattern 条件，同时传 searchText 和 taskPattern 时后者被忽略~~ 已修复
+- FTS5 SQL 加入 taskPattern 过滤条件 ✓
+
+### O5 stats() 包含 merged 记录拉高 avgScore [P2] [x]
+- ~~avgScore 包含 merged 记录的固定高分 0.85，系统性拉高平均分~~ 已修复
+- avgScore 改为只计算 merged=0 的记录 ✓
+
+### O6 mergeLessons INSERT 缺 source/content_hash 列 [P2] [x]
+- ~~INSERT 语句缺少 source 和 content_hash 列，merged 记录无法通过 source 区分，且相同工具集的合并被误去重~~ 已修复
+- INSERT 加入 source 列（'model-inferred'）和 content_hash 列（`merge-${contextHash}` 避免重复）✓
+
+### O7 neutral feedback 评分不一致 [P2] [x]
+- ~~index.ts 运行时 neutral=0.6，OutcomeEvaluator test fixture neutral=0.5~~ 已对齐
+- OutcomeEvaluator.feedbackScore 的 neutral 从 0.5 改为 0.6 ✓
+
+### O8 UserMessage content 可能是 ContentPart[] [P1] [x]
+- ~~String() 对数组调用产生 "[object Object]"，导致任务模式推断和搜索失效~~ 已修复
+- 检测 raw 是否为数组，提取 text 类型 part 的文本 ✓
+
+---
+
+## 域 P — 第八轮代码审查修复（2026-08-26）
+
+> 焦点：性能节流、状态判定准确性、去重精确性、资源清理、LLM 容错。
+
+### P1 applyTTL 每次 store() 全表操作性能问题 [P2] [x]
+- ~~enforceRetention 中 activeForget + applyTTL 每次 store 都执行全表 UPDATE/DELETE~~ 已修复
+- activeForget 保留每次执行（有索引，快），applyTTL 节流为每 10 次 store 执行一次 ✓
+
+### P2 goal paused 状态被误判为 stalled [P2] [x]
+- ~~goal.phase='paused' 被归类为 stalled，但用户可能是主动暂停而非任务停滞~~ 已修复
+- 改为 'none'（中立），不影响评分 ✓
+
+### P3 appendPreference 子串误匹配 [P2] [x]
+- ~~使用 includes 子串匹配，"use TS" 会匹配 "don't use TS" 被误去重~~ 已修复
+- 改为按行精确去重（split + 逐行比较）✓
+
+### P4 distillPreferencesWithLLM lesson JSON fallback 到原始字符串 [P3] [x]
+- ~~JSON 合法但无 reusable_lesson 字段时 fallback 到原始 JSON 字符串，LLM 收到无意义数据~~ 已修复
+- 无 reusable_lesson 时返回 null 被 filter 过滤，非 JSON 旧数据按纯文本处理 ✓
+
+### P5 MetaCognitionEngine.queue 无上限 [P2] [x]
+- ~~queue 数组无容量限制，processQueue 长时间不触发时无限增长~~ 已修复
+- 新增 MAX_QUEUE_SIZE = 100，满时丢弃最旧条目 ✓
+
+### P6 clear() 不清理 FTS 表 [P3] [x]
+- ~~DELETE FROM experiences 后 FTS 表残留旧索引数据~~ 已修复
+- clear() 中加入 FTS5 rebuild ✓
+
+### P7 mergeLessons 记录 source 无法区分 [P3] [x]
+- ~~mergeLessons INSERT 的 source 用默认 'model-inferred'，无法区分合并记录~~ 已修复
+- 改为 'merged'，SOURCE_WEIGHTS 加入对应权重 ✓
+
+### P8 GUI export/import 同时请求互相覆盖 [P3] [x]
+- ~~export 和 import 是两个独立 if，同时到达时 update 可能互相覆盖~~ 已修复
+- 改为 else-if，互斥处理 ✓
+
+### P9 tryLLMComplete 吞掉部分结果不返回 [P2] [x]
+- ~~catch 块返回 null，已收集的 chunks 被丢弃，超时或网络错误时丢失部分结果~~ 已修复
+- chunks 声明提到 try 外，catch 块返回已收集的部分结果 ✓
+
+---
+
+## 域 Q — 第九轮代码审查修复（2026-08-26）
+
+> 焦点：turn-stopping 中消息格式兼容性、computeContentHash filter 逻辑错误。
+
+### Q1 turn-stopping 中 taskPattern 提取不处理 ContentPart 数组 [P1] [x]
+- ~~firstUserMsg?.data?.content 可能是 ContentPart[]，但只做 String() 不处理数组~~ 已修复
+- 与 O8 同样的修复逻辑：检测数组类型，提取 text part ✓
+
+### Q2 computeContentHash filter 永远为 true [P1] [x]
+- ~~filter 条件 `t.name !== 'unknown' || true` 永远返回 true，无效工具名未被过滤~~ 已修复
+- 改为 `t.name.length > 0`，空名被过滤 ✓
+
+---
+
+## 域 R — 第十轮代码审查修复（2026-08-26）
+
+> 焦点：运行时路径与 test fixture 路径的逻辑分歧、SQLite 事务原子性。
+
+### R1 pre-step worst 非最低分记录 [P1] [x]
+- ~~worst 取自 sorted 末尾（按 difficulty + score 排序），而非纯 outcomeScore 最低的记录~~ 已修复
+- 改为独立按 outcomeScore 升序取最低分记录作为 worst ✓
+
+### R2 无 lesson 记录的 budget 消耗方式不一致 [P2] [x]
+- ~~index.ts 中无 lesson 记录消耗 50 字符 budget，BehaviorAdapter 中不消耗~~ 已对齐
+- 改为无 lesson 记录不消耗 budget，无条件加入 ✓
+
+### R3 budget 耗尽时仍执行 incrementReuse [P1] [x]
+- ~~budgeted 为空时 selected 保留原始值，incrementReuse 对未注入记录执行~~ 已修复
+- budgeted 为空时 selected 清空，跳过注入和 incrementReuse ✓
+
+### R4 mergeLessons 多步写操作无事务保护 [P2] [x]
+- ~~INSERT 合并记录 + markMerged 循环无事务，异常时产生重复记录~~ 已修复
+- 用 db.transaction() 包裹 INSERT + markMerged ✓
+
+### R5 enforceRetention 多步 GC 无事务保护 [P2] [x]
+- ~~promoteYoungGen + DELETE + major GC 多步操作无事务，异常时 GC 状态不一致~~ 已修复
+- 用 db.transaction() 包裹全部 GC 操作 ✓
+
+---
+
+## 域 S — 第十一轮代码审查（2026-08-26）
+
+> 焦点：SQL 冗余排序、todo 过时注释、已知未实现项盘点。
+
+### S1 detectFactConflicts 冗余 SQL 排序 [P3] [x]
+- ~~`detectFactConflicts` 先 `ORDER BY confidence DESC, updated_at DESC` 查询，随后 JS 又按 `SOURCE_WEIGHTS` 重新排序，SQL 排序是死排序~~ 已修复
+- 去掉 SQL 层的 `ORDER BY confidence DESC, updated_at DESC`，排序统一由 JS 端 `SOURCE_WEIGHTS` + confidence 负责
+- 注释"第一个 item 有最高 source weight"与 SQL 排序不符的误导已消除 ✓
+
+### S2 todo 中 A6 过时注释 [P3] [x]
+- ~~A6 的"注"仍写"质量高缩小范围——未实现（仅按数量分档）"，但 M5 已实现 avgScore 动态伸缩~~ 已更新
+- A6 注释改为"质量动态伸缩已实现（M5）"，代码位置更新为 `experience-store.ts:354-368` ✓
+
+### S3 已知未实现项盘点（保留，不属本轮缺陷）[ ]
+- **B2 主题归一化**：`detectFactConflicts` 仍要求 subject+predicate 精确字符串匹配，同一事实的多种表述（如 workspace digest 差异、命令别名）不会归并，导致冲突漏报 + 原子事实表碎片化（todo 域 B2 已记录）
+- **Phase 6 自适应策略调整**：`agent/request` 模型选择、`tools/restrict` 工具推荐、`repeat-tool-reminder` 守卫阈值自适应，三项均未开始（todo 域 L5 已记录）
+- **I7 双轨技术债**：`BehaviorAdapter`/`OutcomeEvaluator`/`MetaCognitionEngine` 三个独立类仅作测试 fixture，运行时走 index.ts 内联逻辑，需人工保持同步（历史多轮 N1/O7 均出现双轨分歧 bug）

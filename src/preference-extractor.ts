@@ -54,7 +54,9 @@ export function extractPreference(userText: string): string | null {
 export function appendPreference(filePath: string, preference: string): boolean {
   const existing = readPreferences(filePath)
   const normalized = preference.toLowerCase().trim()
-  if (existing && existing.toLowerCase().includes(normalized)) {
+  // P3: Line-level dedup instead of substring — avoids "use TS" matching "don't use TS"
+  const existingLines = existing ? existing.toLowerCase().split('\n').map(l => l.replace(/^-\s*/, '').trim()) : []
+  if (existingLines.some(l => l === normalized)) {
     return false
   }
 
@@ -97,13 +99,19 @@ export async function distillPreferencesWithLLM(
     .map(r => {
       try {
         const parsed = JSON.parse(r.lesson!)
+        // P4: Don't fallback to raw JSON string — extract reusable lesson or skip
+        const lessonText = parsed.reusable_lesson ?? parsed.reusableLesson
+        if (typeof lessonText !== 'string' || lessonText.length === 0) return null
         return {
-          lesson: parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson,
+          lesson: lessonText,
           difficulty: r.difficulty,
           score: r.outcomeScore,
           tools: r.toolsUsed,
         }
-      } catch { return null }
+      } catch {
+        // Non-JSON lesson (legacy plain text) — use as-is
+        return { lesson: r.lesson!, difficulty: r.difficulty, score: r.outcomeScore, tools: r.toolsUsed }
+      }
     })
     .filter(Boolean) as { lesson: string; difficulty: string; score: number; tools: string[] | null }[]
 
@@ -138,7 +146,8 @@ If no high-confidence preferences can be extracted, return an empty array: []`
     const parsed = JSON.parse(clean) as { preference: string; confidence: string }[]
     if (!Array.isArray(parsed)) return 0
 
-    const existing = readPreferences(prefPath)
+    // N5: Read preferences once before the loop, not per-iteration
+    let existing = readPreferences(prefPath)
     let added = 0
     for (const item of parsed) {
       if (item.confidence !== 'high' || !item.preference) continue
@@ -159,6 +168,8 @@ If no high-confidence preferences can be extracted, return an empty array: []`
       const tmpPath = `${prefPath}.tmp.${process.pid}`
       writeFileSync(tmpPath, content, 'utf-8')
       renameSync(tmpPath, prefPath)
+      // Update local copy for next iteration's dedup check
+      existing = content
       added++
     }
     return added
