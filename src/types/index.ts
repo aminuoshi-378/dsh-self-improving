@@ -73,6 +73,10 @@ export interface ExperienceRecord {
   turnId: string
   createdAt: number
 
+  // Task unit (P-C: cross-turn aggregation)
+  taskUnitId: string // ULID grouping turns into a task unit
+  goalId: string | null // dsh goal id if this turn belongs to a goal-driven task
+
   // Context signature
   contextHash: string
   taskPattern: string | null
@@ -258,6 +262,8 @@ export interface ExportedExperience {
   lesson: string | null
   difficulty: 'low' | 'medium' | 'high'
   taskPattern: string | null
+  taskUnitId: string
+  goalId: string | null
   generation: number
   merged: boolean
   confidence: number

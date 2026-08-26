@@ -104,6 +104,8 @@ class ExperienceStore {
         session_id TEXT NOT NULL,
         turn_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
+        task_unit_id TEXT NOT NULL DEFAULT '',
+        goal_id TEXT,
         context_hash TEXT NOT NULL,
         task_pattern TEXT,
         tools_used TEXT,
@@ -126,6 +128,8 @@ class ExperienceStore {
     this.ensureColumn('generation', 'INTEGER DEFAULT 0')
     this.ensureColumn('last_injected_at', 'INTEGER')
     this.ensureColumn('merged', 'INTEGER DEFAULT 0')
+    this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('goal_id', 'TEXT')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_exp_context ON experiences(context_hash);
@@ -155,20 +159,24 @@ class ExperienceStore {
     workspaceDigest: string | null,
     difficulty: 'low' | 'medium' | 'high' = 'medium',
     taskPattern: string | null = null,
+    taskUnitId?: string,
+    goalId?: string | null,
   ): string {
     const id = ulid()
+    const taskUnit = taskUnitId ?? id // Default: this turn is its own task unit
     const contextHash = [taskPattern ?? '', toolsUsed.slice().sort().join(','), workspaceDigest ?? ''].join('|')
 
     this.db.prepare(`
-      INSERT INTO experiences (id, session_id, turn_id, created_at, context_hash,
-        task_pattern, tools_used, workspace_digest, actions, outcome_score,
+      INSERT INTO experiences (id, session_id, turn_id, created_at, task_unit_id, goal_id,
+        context_hash, task_pattern, tools_used, workspace_digest, actions, outcome_score,
         user_feedback, lesson, difficulty, generation, last_injected_at, merged,
         confidence, reuse_count)
-      VALUES (@id, @sessionId, @turnId, @createdAt, @contextHash,
-        @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
+      VALUES (@id, @sessionId, @turnId, @createdAt, @taskUnit, @goalId,
+        @contextHash, @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
         @difficulty, 0, NULL, 0, 1.0, 0)
     `).run({
       id, sessionId, turnId, createdAt: Date.now(),
+      taskUnit, goalId: goalId ?? null,
       contextHash, taskPattern, toolsUsed: JSON.stringify(toolsUsed),
       ws: workspaceDigest, actions, score: outcomeScore, feedback: userFeedback,
       difficulty,
@@ -505,6 +513,92 @@ function log(msg: string, data?: unknown): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A1-a: User preference extraction (rule-based, writes to ~/.dsh/preferences.md)
+// ---------------------------------------------------------------------------
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+
+/** Resolve preferences file path from config or DSH_HOME. */
+function getPreferencesFilePath(dshHome?: string): string {
+  const home = dshHome || process.env.DSH_HOME || `${process.env.HOME}/.dsh`
+  return join(home, 'preferences.md')
+}
+
+/** Read current preferences file content. Returns empty string if file doesn't exist. */
+function readPreferences(filePath: string): string {
+  try {
+    if (!existsSync(filePath)) return ''
+    return readFileSync(filePath, 'utf-8').trim()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * A1-a: Extract explicit preference declarations from user message text.
+ * Detects patterns like "请记住我偏好简洁回答", "以后总是用TypeScript",
+ * "记住我喜欢中文回复", "remember I prefer concise answers".
+ * Returns the extracted preference text, or null if no preference detected.
+ */
+const PREFERENCE_TRIGGERS = [
+  /(?:请记住|记住|以后总是|我偏好|我喜欢|我习惯于|请确保|务必|remember\s+(?:that\s+)?(?:I|that)\s+(?:prefer|like|always|usually)|from\s+now\s+on)\s*[:：]?\s*(.+)/i,
+  /(?:偏好|习惯|要求|规则)\s*[:：]\s*(.+)/i,
+]
+
+const PREFERENCE_STOPWORDS = /^(?:帮我|请帮|能不能|可以|帮我修|帮我写|帮我查|帮我找|create|edit|fix|write|read|search|find)\b/i
+
+function extractPreference(userText: string): string | null {
+  if (!userText || userText.length < 8) return null
+  // Skip obvious task instructions that look like preferences
+  if (PREFERENCE_STOPWORDS.test(userText.trim())) return null
+
+  for (const pattern of PREFERENCE_TRIGGERS) {
+    const match = userText.match(pattern)
+    if (match && match[1]) {
+      const pref = match[1].trim()
+      // Sanity check: preference should be reasonably short and not a full task description
+      if (pref.length >= 2 && pref.length <= 200) {
+        return pref
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * A1-a: Append a preference to the preferences file, with deduplication.
+ * Checks if an equivalent preference already exists (case-insensitive substring match).
+ * Returns true if a new preference was added, false if it was a duplicate.
+ */
+function appendPreference(filePath: string, preference: string): boolean {
+  const existing = readPreferences(filePath)
+  const normalized = preference.toLowerCase().trim()
+
+  // Check for duplicates — if the new preference text is a substring of existing content
+  if (existing && existing.toLowerCase().includes(normalized)) {
+    return false
+  }
+
+  // Build the new content
+  const line = `- ${preference}`
+  let content: string
+  if (!existing) {
+    content = `# User Preferences (advisory)\n\n${line}\n`
+  } else {
+    content = `${existing}\n${line}\n`
+  }
+
+  try {
+    mkdirSync(dirname(filePath), { recursive: true })
+    writeFileSync(filePath, content, 'utf-8')
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * P2: Generate a structured reflection (Reflection JSON) from turn data.
  * This is the rule-based fallback when no LLM is available.
@@ -590,6 +684,164 @@ function mergeLessonsRuleBased(records: ExperienceRecord[]): {
   }
 }
 
+// ---------------------------------------------------------------------------
+// LLM bridge — dynamically access ctx.llm without hard dependency
+// Used by C5 (lesson merge) and A1-b (preference distillation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to complete a prompt using ctx.llm. Returns null if LLM is unavailable.
+ * The prompt is sent as a simple user message; we collect the full text response.
+ */
+async function tryLLMComplete(ctx: any, prompt: string): Promise<string | null> {
+  try {
+    const llm = ctx.get?.('llm')
+    if (!llm || typeof llm.stream !== 'function') return null
+
+    // Build a minimal model request and collect streamed text
+    const chunks: string[] = []
+    for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }] })) {
+      if (chunk?.type === 'text-delta' && chunk.text) {
+        chunks.push(chunk.text)
+      } else if (typeof chunk === 'string') {
+        chunks.push(chunk)
+      }
+    }
+    return chunks.length > 0 ? chunks.join('') : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * C5: LLM-based lesson merging — consolidate related lessons into one general lesson.
+ * Falls back to rule-based merging if LLM is unavailable.
+ */
+async function llmMergeLessons(ctx: any, records: ExperienceRecord[]): Promise<{
+  whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string
+}> {
+  const lessons = records.map(r => {
+    try {
+      const parsed = JSON.parse(r.lesson ?? '{}')
+      return parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson ?? ''
+    } catch { return r.lesson ?? '' }
+  }).filter(l => l.length > 0)
+
+  const prompt = `You are a lesson consolidation engine. Merge these related lessons into a single consolidated lesson.
+
+## Input Lessons
+${JSON.stringify(lessons, null, 2)}
+
+## Task
+Find the common pattern across these lessons and produce a single, more general but still actionable lesson.
+
+## Output Format
+Respond with ONLY valid JSON, no markdown fences:
+{"whatWorked":"merged description","whatFailed":"merged description","whatToTryDifferently":"suggestion","reusableLesson":"consolidated actionable lesson under 50 words"}`
+
+  const response = await tryLLMComplete(ctx, prompt)
+  if (response) {
+    try {
+      // Strip markdown fences if present
+      const clean = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+      const parsed = JSON.parse(clean)
+      return {
+        whatWorked: parsed.whatWorked ?? parsed.what_worked ?? '',
+        whatFailed: parsed.whatFailed ?? parsed.what_failed ?? '',
+        whatToTryDifferently: parsed.whatToTryDifferently ?? parsed.what_to_try_differently ?? '',
+        reusableLesson: parsed.reusableLesson ?? parsed.reusable_lesson ?? '',
+      }
+    } catch { /* fall through to rule-based */ }
+  }
+  return mergeLessonsRuleBased(records)
+}
+
+/**
+ * A1-b: LLM-based automatic preference distillation.
+ * Analyzes recent lessons and outcome trends to extract high-confidence preferences.
+ * Writes results to ~/.dsh/preferences.md with "# [auto]" marker.
+ * Returns the number of new auto-preferences written.
+ */
+async function distillPreferencesWithLLM(ctx: any, store: ExperienceStore, prefPath: string): Promise<number> {
+  const stats = store.stats()
+  if (stats.total < 20) return 0 // Need minimum data
+
+  // Gather recent lessons for the LLM to analyze
+  const recent = store.query({ limit: 30, minScore: 0.0 })
+  const lessons = recent
+    .filter(r => r.lesson)
+    .map(r => {
+      try {
+        const parsed = JSON.parse(r.lesson!)
+        return {
+          lesson: parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson,
+          difficulty: r.difficulty,
+          score: r.outcomeScore,
+          tools: r.toolsUsed,
+        }
+      } catch { return null }
+    })
+    .filter(Boolean) as { lesson: string; difficulty: string; score: number; tools: string[] | null }[]
+
+  if (lessons.length < 5) return 0
+
+  const prompt = `You are a preference distillation engine. Analyze the following agent experience lessons and extract high-confidence user preferences or behavioral patterns.
+
+## Experience Data (most recent ${lessons.length} lessons)
+${JSON.stringify(lessons.slice(0, 20), null, 2)}
+
+## Stats
+- Total experiences: ${stats.total}
+- Average score: ${stats.avgScore.toFixed(2)}
+- Positive feedback: ${stats.positive}
+- Negative feedback: ${stats.negative}
+- High difficulty: ${stats.highDifficultyCount}
+
+## Task
+Extract 0-3 stable preferences that are strongly supported by the data. Only include preferences with high confidence (e.g., consistently positive/negative outcomes with the same pattern). Do NOT speculate.
+
+## Output Format
+Respond with ONLY valid JSON array, no markdown fences:
+[{"preference":"concise description of preference","confidence":"high"}]
+
+If no high-confidence preferences can be extracted, return an empty array: []`
+
+  const response = await tryLLMComplete(ctx, prompt)
+  if (!response) return 0
+
+  try {
+    const clean = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+    const parsed = JSON.parse(clean) as { preference: string; confidence: string }[]
+    if (!Array.isArray(parsed)) return 0
+
+    const existing = readPreferences(prefPath)
+    let added = 0
+    for (const item of parsed) {
+      if (item.confidence !== 'high' || !item.preference) continue
+      const pref = item.preference.trim()
+      if (pref.length < 2 || pref.length > 200) continue
+      // Dedup against existing (case-insensitive)
+      if (existing && existing.toLowerCase().includes(pref.toLowerCase())) continue
+
+      // Write with # [auto] marker section
+      const line = `- [auto] ${pref}`
+      let content: string
+      if (!existing) {
+        content = `# User Preferences (advisory)\n\n## Auto-distilled\n\n${line}\n`
+      } else if (existing.includes('## Auto-distilled')) {
+        content = existing.replace(/## Auto-distilled\n/, `## Auto-distilled\n${line}\n`)
+      } else {
+        content = `${existing}\n## Auto-distilled\n\n${line}\n`
+      }
+      writeFileSync(prefPath, content, 'utf-8')
+      added++
+    }
+    return added
+  } catch {
+    return 0
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const store = new ExperienceStore(config.dbPath)
 
@@ -598,12 +850,20 @@ export function apply(ctx: Context, config: Config): void {
   // Per-agent turn tracking: collect tool results during a turn
   // Key: agent.id only (accumulate all tools across steps within a turn)
   // Also tracks step count for efficiency calculation (P0)
+  // P-C: taskUnitId tracks cross-turn aggregation for goal-driven tasks
   const agentTools = new Map<string, {
     tools: { name: string; success: boolean }[]
     sessionId: string
     stepCount: number
     injectedThisTurn: boolean  // P0: track if already injected this turn
+    taskUnitId: string        // P-C: ULID grouping turns into a task unit
+    goalId: string | null     // P-C: dsh goal id if goal-driven
   }>()
+
+  // P-C: Track active task unit per agent (for cross-turn aggregation)
+  // When a goal exists, all turns until goal complete share the same taskUnitId.
+  // When no goal, each turn is its own task unit (default).
+  const agentTaskUnits = new Map<string, { taskUnitId: string; goalId: string | null; turns: number }>()
 
   // --- Layer 1: Observe tool outcomes via tools/result ---
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
@@ -611,7 +871,29 @@ export function apply(ctx: Context, config: Config): void {
     if (!agent) return
 
     if (!agentTools.has(agent.id)) {
-      agentTools.set(agent.id, { tools: [], sessionId: agent.id, stepCount: 0, injectedThisTurn: false })
+      // P-C: Resolve or create task unit for this agent
+      let taskUnit = agentTaskUnits.get(agent.id)
+      if (!taskUnit) {
+        // Check if there's an active goal
+        let goalId: string | null = null
+        try {
+          const goalService = ctx.get('goals')
+          if (goalService && typeof goalService.get === 'function') {
+            const goal = goalService.get(agent)
+            if (goal && (goal.phase === 'active')) {
+              goalId = goal.id
+            }
+          }
+        } catch { /* goal service not available */ }
+
+        taskUnit = { taskUnitId: ulid(), goalId, turns: 0 }
+        agentTaskUnits.set(agent.id, taskUnit)
+      }
+
+      agentTools.set(agent.id, {
+        tools: [], sessionId: agent.id, stepCount: 0, injectedThisTurn: false,
+        taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
+      })
     }
     agentTools.get(agent.id)!.tools.push({
       name: exec.name,
@@ -628,7 +910,18 @@ export function apply(ctx: Context, config: Config): void {
     const entry = agentTools.get(agent.id)
 
     if (!entry || entry.tools.length === 0) {
-      log(`turn-stopping: no tools tracked for agent ${agent.id}, skipping`)
+      log(`turn-stopping: no tools tracked for agent ${agent.id}, skipping (P-B: no-tool turns not stored)`)
+      return
+    }
+
+    // P-B: Low-value filtering — skip pure Q&A turns (1-2 steps, all success, no failures)
+    // These are simple lookups or chitchat that don't produce reusable experience
+    const stepCountForFilter = Math.max(entry.stepCount, 1)
+    const hasFailuresForFilter = entry.tools.some(t => !t.success)
+    const difficultyForFilter = computeDifficulty(stepCountForFilter, hasFailuresForFilter)
+    if (difficultyForFilter === 'low' && entry.tools.length <= 2) {
+      log(`turn-stopping: low-value turn (P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
+      agentTools.delete(agent.id)
       return
     }
 
@@ -781,11 +1074,26 @@ export function apply(ctx: Context, config: Config): void {
       if (msgText) {
         taskPattern = inferTaskPattern(String(msgText))
       }
+
+      // A1-a: Extract explicit preference from user message
+      if (msgText) {
+        const pref = extractPreference(String(msgText))
+        if (pref) {
+          const prefPath = getPreferencesFilePath(
+            (config as any).dshHome || undefined,
+          )
+          const added = appendPreference(prefPath, pref)
+          if (added) {
+            log(`A1-a: preference extracted and saved: "${pref}"`)
+          }
+        }
+      }
     } catch { /* ignore */ }
 
     const expId = store.store(
       agent.id, `turn-${turn}`, outcomeScore, userFeedback,
       toolsUsed, actions, wsDigest, difficulty, taskPattern,
+      entry.taskUnitId, entry.goalId,
     )
 
     log(`turn ${turn} scored — score=${outcomeScore.toFixed(2)} | goal=${goalProgress} tools=${toolCallCount} successRate=${toolSuccessRate.toFixed(2)} steps=${stepCount} efficiency=${stepEfficiency.toFixed(2)} difficulty=${difficulty} task=${taskPattern ?? 'unknown'} guards=${guardCount} feedback=${userFeedback} implicitNeg=${implicitNegative} | exp ${expId}`)
@@ -805,6 +1113,13 @@ export function apply(ctx: Context, config: Config): void {
 
     // Clean up agent tool tracking for next turn
     agentTools.delete(agent.id)
+
+    // P-C: If goal completed, close the task unit
+    if (goalProgress === 'advanced' && entry.goalId) {
+      // Goal advanced/complete — close the task unit
+      agentTaskUnits.delete(agent.id)
+      log(`task unit ${entry.taskUnitId} closed (goal ${entry.goalId} advanced)`)
+    }
   })
 
   // --- Layer 2: Inject experience at agent/pre-step ---
@@ -920,24 +1235,41 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   // --- Layer 2: Register system prompt section for learned preferences ---
+  // A1-c: Reads from ~/.dsh/preferences.md (persisted preferences) + live stats
   if (config.behaviorAdapterEnabled) {
     ctx.systemPrompt.section({
       name: 'self-improving-learned-preferences',
       order: 450,
       text: () => {
+        const lines: string[] = []
+
+        // A1: Read persisted user preferences
+        const prefPath = getPreferencesFilePath((config as any).dshHome || undefined)
+        const prefContent = readPreferences(prefPath)
+        if (prefContent) {
+          lines.push('## User Preferences (advisory)', '')
+          lines.push(prefContent)
+          lines.push('')
+        }
+
+        // Live stats (kept as supplementary signal)
         const stats = store.stats()
-        if (stats.total < 10) return ''
-        const lines: string[] = ['## Learned Preferences (advisory)', '']
-        if (stats.avgScore > 0.7) {
-          lines.push(`- Recent outcomes are strong (avg score ${stats.avgScore.toFixed(2)} over ${stats.total} turns) — current approach is effective`)
+        if (stats.total >= 10) {
+          if (lines.length === 0) {
+            lines.push('## Learned Preferences (advisory)', '')
+          }
+          if (stats.avgScore > 0.7) {
+            lines.push(`- Recent outcomes are strong (avg score ${stats.avgScore.toFixed(2)} over ${stats.total} turns)`)
+          }
+          if (stats.avgScore < 0.4) {
+            lines.push(`- Recent outcomes have low scores (avg ${stats.avgScore.toFixed(2)}) — consider more careful tool selection`)
+          }
+          if (stats.positive > stats.total * 0.5) {
+            lines.push(`- User has given positive feedback on ${stats.positive} of ${stats.total} turns`)
+          }
         }
-        if (stats.avgScore < 0.4) {
-          lines.push(`- Recent outcomes have low scores (avg ${stats.avgScore.toFixed(2)}) — consider more careful tool selection`)
-        }
-        if (stats.positive > stats.total * 0.5) {
-          lines.push(`- User has given positive feedback on ${stats.positive} of ${stats.total} turns`)
-        }
-        return lines.length > 2 ? lines.join('\n') : ''
+
+        return lines.length > 0 ? lines.join('\n') : ''
       },
     })
   }
@@ -980,14 +1312,16 @@ export function apply(ctx: Context, config: Config): void {
       }
     }
 
-    // P2: Merge fragmented lessons if enough have accumulated
+    // C5: Merge fragmented lessons if enough have accumulated
+    // Uses LLM if available (via ctx.llm), falls back to rule-based
     try {
       const groups = store.getUnmergedLessonGroups()
       if (groups.length > 0) {
         log(`merging ${groups.length} lesson groups`)
         for (const group of groups) {
           if (group.records.length < 2) continue
-          const mergedLesson = mergeLessonsRuleBased(group.records)
+          // C5: Try LLM merge first, fall back to rule-based
+          const mergedLesson = await llmMergeLessons(ctx, group.records)
           const sourceIds = group.records.map(r => r.id)
           const tools = group.records[0].toolsUsed ?? []
           store.mergeLessons(sourceIds, mergedLesson, group.records[0].difficulty as any, tools)
@@ -996,6 +1330,18 @@ export function apply(ctx: Context, config: Config): void {
       }
     } catch (err) {
       log(`lesson merge error: ${(err as Error).message}`)
+    }
+
+    // A1-b: LLM-based automatic preference distillation
+    // Runs periodically during maintenance to extract high-confidence preferences
+    try {
+      const prefPath = getPreferencesFilePath((config as any).dshHome || undefined)
+      const newPrefs = await distillPreferencesWithLLM(ctx, store, prefPath)
+      if (newPrefs > 0) {
+        log(`A1-b: distilled ${newPrefs} new auto-preferences`)
+      }
+    } catch (err) {
+      log(`preference distillation error: ${(err as Error).message}`)
     }
 
     // Distill preferences + log stats

@@ -52,6 +52,9 @@ export class ExperienceStore {
         turn_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
 
+        task_unit_id TEXT NOT NULL DEFAULT '',
+        goal_id TEXT,
+
         context_hash TEXT NOT NULL,
         task_pattern TEXT,
         tools_used TEXT,
@@ -80,6 +83,8 @@ export class ExperienceStore {
     this.ensureColumn('last_injected_at', 'INTEGER')
     this.ensureColumn('merged', 'INTEGER DEFAULT 0')
     this.ensureColumn('tags', 'TEXT')
+    this.ensureColumn('task_unit_id', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('goal_id', 'TEXT')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiences_context ON experiences(context_hash);
@@ -89,6 +94,8 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_experiences_difficulty ON experiences(difficulty);
       CREATE INDEX IF NOT EXISTS idx_experiences_generation ON experiences(generation);
       CREATE INDEX IF NOT EXISTS idx_experiences_merged ON experiences(merged);
+      CREATE INDEX IF NOT EXISTS idx_experiences_task_unit ON experiences(task_unit_id);
+      CREATE INDEX IF NOT EXISTS idx_experiences_goal ON experiences(goal_id);
     `)
   }
 
@@ -113,9 +120,12 @@ export class ExperienceStore {
     toolsUsed: string[] | null
     workspaceDigest: string | null
     actions: string
+    taskUnitId?: string
+    goalId?: string | null
     tags?: string[]
   }): string {
     const id = ulid()
+    const taskUnitId = context.taskUnitId ?? id // Default: this turn is its own task unit
     const contextHash = this.computeContextHash(
       context.taskPattern,
       context.toolsUsed,
@@ -125,12 +135,14 @@ export class ExperienceStore {
     const stmt = this.db.prepare(`
       INSERT INTO experiences (
         id, session_id, turn_id, created_at,
+        task_unit_id, goal_id,
         context_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
         difficulty, generation, last_injected_at, merged,
         tags, confidence, reuse_count
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
+        @taskUnitId, @goalId,
         @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
         @difficulty, @generation, @lastInjectedAt, @merged,
@@ -143,6 +155,8 @@ export class ExperienceStore {
       sessionId: outcome.sessionId,
       turnId: outcome.turnId,
       createdAt: outcome.timestamp,
+      taskUnitId,
+      goalId: context.goalId ?? null,
       contextHash,
       taskPattern: context.taskPattern,
       toolsUsed: context.toolsUsed ? JSON.stringify(context.toolsUsed) : null,
@@ -617,6 +631,8 @@ export class ExperienceStore {
       sessionId: row.session_id,
       turnId: row.turn_id,
       createdAt: row.created_at,
+      taskUnitId: row.task_unit_id || row.id, // Fallback for old rows without the column
+      goalId: row.goal_id ?? null,
       contextHash: row.context_hash,
       taskPattern: row.task_pattern,
       toolsUsed: row.tools_used ? JSON.parse(row.tools_used) : null,
@@ -762,6 +778,8 @@ export class ExperienceStore {
       lesson: rec.lesson,
       difficulty: rec.difficulty,
       taskPattern: rec.taskPattern,
+      taskUnitId: rec.taskUnitId,
+      goalId: rec.goalId,
       generation: rec.generation,
       merged: rec.merged,
       confidence: rec.confidence,
@@ -786,6 +804,8 @@ export class ExperienceStore {
       lesson: rec.lesson,
       difficulty: rec.difficulty,
       taskPattern: rec.taskPattern,
+      taskUnitId: rec.taskUnitId,
+      goalId: rec.goalId,
       generation: rec.generation,
       merged: rec.merged,
       confidence: rec.confidence,
@@ -900,6 +920,8 @@ interface RawExperienceRow {
   session_id: string
   turn_id: string
   created_at: number
+  task_unit_id: string
+  goal_id: string | null
   context_hash: string
   task_pattern: string | null
   tools_used: string | null
