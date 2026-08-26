@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 修复 — U1 真机联调：user/message 事件结构不匹配 [P0]（2026-08-26）
+
+#### U1 — task_pattern 恒 null 的根因修复
+- 真机跑任务后 `task_pattern` 全部为 null，根因：代码假设 dsh `user/message` 会话事件 `data` 带 `turn`/`text` 字段，但真实 `UserMessage = { id, role, content: ContentBlock[], source }` 无 turn 无 text
+- 新增 `extractMessageText()` / `findUserMessageText()` / `countUserMessagesInTurn()` 辅助函数，按 `turn/start` 边界定位用户消息、从 ContentBlock[] 提取文本、跳过 plugin 合成上下文
+- 修复 taskPattern 提取 + 隐式负反馈检测 + Phase 6 模型选择三处
+- 新增 9 个测试（`test/event-parsing.test.ts`），总测试 100→109
+
 ### 推进 — T1-T3 第十二轮：遗留项推进（2026-08-26）
 
 #### T1 — B2 主题归一化 [P1]

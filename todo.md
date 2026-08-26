@@ -693,3 +693,23 @@
 - J4 注入改用 `startsWith('failed-tool-sequence')`/`startsWith('effective-tool-sequence')` 前缀匹配 ✓
 - 不同序列不再被 `detectFactConflicts` 误判为冲突（predicate 后缀不同）✓
 - 新增 4 个测试（advanced-features 26→30，总测试 96→100）✓
+
+---
+
+## 域 U — 真机联调发现与修复（2026-08-26）
+
+> 焦点：dsh 真实环境（`dsh --profile web`）跑任务后，从 experiences.db 反查发现的事件结构不匹配 bug。
+
+### U1 user/message 事件结构不匹配（task_pattern 恒 null）[P0] [x]
+- **现象**：真机跑任务后，experiences.db 里 `task_pattern` 全部为 null（`inferTaskPattern` 从未生效），lesson 也为 null
+- **根因**：代码假设 dsh 的 `user/message` 会话事件 `data` 带 `turn` 和 `text` 字段，但真实结构是 `data: UserMessage = { id, role, content: ContentBlock[], source }`——**无 turn，无 text**（turn 只存在于 `turn/start`/`turn/end`/`step/start`/`step/end` 事件）
+- **受影响**：
+  - taskPattern 提取（turn-stopping）：`events.find(e => e.type === 'user/message' && e.data?.turn === turn)` 永远 undefined
+  - 隐式负反馈"同 turn 纠正" + "用户重述任务"检测：`e.data?.turn === turn` 永远空
+  - Phase 6 模型选择 taskPattern 提取
+- **修复**：新增 `extractMessageText()` / `findUserMessageText()` / `countUserMessagesInTurn()` 三个辅助函数（index.ts 导出），按 `turn/start` 边界定位用户消息，从 `content: ContentBlock[]` 提取文本，跳过 `source.kind === 'plugin'` 的合成上下文 ✓
+- 新增 9 个测试（`test/event-parsing.test.ts`），总测试 100→109 ✓
+- **验证**：真机 experiences.db 中最新记录 `tools_used=["edit","edit"]`、atomic_facts predicate 带哈希后缀 `effective-tool-sequence:01f26d39c7e0`（T4 修复生效）、source=model-inferred 均正确
+
+### U2 lesson=null 说明 [ ]
+- 真机最新记录 `lesson=null` 属**预期行为**：lesson 生成依赖 `run-maintenance`（空闲时触发），非 turn-stopping 同步生成；需再跑一个任务或等待 maintenance 触发才会落 lesson（非 bug）

@@ -86,6 +86,73 @@ function log(msg: string, data?: unknown): void {
   }
 }
 
+/**
+ * Extract plain text from a dsh message content field.
+ *
+ * dsh's `UserMessage.content` is a `ContentBlock[]` (not a plain string), and
+ * there is no `text` field on the message. This normalizes both shapes:
+ * - string → returned verbatim
+ * - array → join the `text`-typed parts (string items or `{type:'text',text}`)
+ * - anything else → empty string
+ */
+export function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
+      .map((p: any) => (typeof p === 'string' ? p : p.text))
+      .join(' ')
+  }
+  return ''
+}
+
+/**
+ * Find the plain text of the first user-originated message in a given turn.
+ *
+ * dsh's `user/message` session event carries `data: UserMessage` with NO `turn`
+ * field — the turn number lives on the `turn/start` / `turn/end` boundary events.
+ * This locates the turn's boundary by `turn/start` seq and returns the first
+ * genuine user message (`source.kind === 'user'`) after it, skipping synthetic
+ * plugin-injected context (file notices, AGENTS.md, skill content, …).
+ *
+ * @param events - the agent's session event list (`agent.session.events`).
+ * @param turn - the turn number to look up.
+ * @returns the extracted text, or '' when no user message is found.
+ */
+export function findUserMessageText(events: any[], turn: number): string {
+  // Locate the turn's start boundary.
+  const startIdx = events.findIndex((e) => e.type === 'turn/start' && e.data?.turn === turn)
+  if (startIdx === -1) return ''
+
+  // Scan forward until the next turn/start (or end) for a real user message.
+  for (let i = startIdx; i < events.length; i++) {
+    const e = events[i]
+    if (e.type === 'turn/start' && e.data?.turn !== turn && i !== startIdx) break
+    if (e.type === 'turn/end' && e.data?.turn === turn) break
+    if (e.type === 'user/message' && e.data?.source?.kind === 'user') {
+      return extractMessageText(e.data?.content)
+    }
+  }
+  return ''
+}
+
+/**
+ * Count genuine user-originated messages within a turn (source.kind === 'user'),
+ * excluding synthetic plugin-injected context.
+ */
+export function countUserMessagesInTurn(events: any[], turn: number): number {
+  const startIdx = events.findIndex((e) => e.type === 'turn/start' && e.data?.turn === turn)
+  if (startIdx === -1) return 0
+
+  let count = 0
+  for (let i = startIdx; i < events.length; i++) {
+    const e = events[i]
+    if (e.type === 'turn/start' && e.data?.turn !== turn && i !== startIdx) break
+    if (e.type === 'turn/end' && e.data?.turn === turn) break
+    if (e.type === 'user/message' && e.data?.source?.kind === 'user') count++
+  }
+  return count
+}
 
 export function apply(ctx: Context, config: Config): void {
   const store = new ExperienceStore(config.dbPath)
@@ -251,43 +318,31 @@ export function apply(ctx: Context, config: Config): void {
       if (lastTurnEnd?.data?.reason?.kind === 'aborted') {
         implicitNegative = true
       }
-      // Check for user correction: user messages after assistant in same turn
+      // Check for user correction: >1 genuine user message in the same turn
+      // (the first is the task; a later one means the user corrected/steered).
       if (stepCount > 1) {
-        const userMsgsInTurn = events.filter((e: any) =>
-          e.type === 'user/message' && e.data?.turn === turn &&
-          e.data?.source?.plugin !== 'repeat-tool-reminder',
-        )
-        if (userMsgsInTurn.length > 0) {
+        const userMsgCount = countUserMessagesInTurn(events, turn)
+        if (userMsgCount > 1) {
           implicitNegative = true
         }
       }
       // D3: Check for user restating the task — high similarity to previous turn's first user message
       if (!implicitNegative && turn > 1) {
-        const currentMsgs = events.filter((e: any) =>
-          e.type === 'user/message' && e.data?.turn === turn &&
-          e.data?.source?.plugin !== 'repeat-tool-reminder',
-        )
-        const prevMsgs = events.filter((e: any) =>
-          e.type === 'user/message' && e.data?.turn === turn - 1 &&
-          e.data?.source?.plugin !== 'repeat-tool-reminder',
-        )
-        if (currentMsgs.length > 0 && prevMsgs.length > 0) {
-          const curText = String(currentMsgs[0].data?.text ?? currentMsgs[0].data?.content ?? '')
-          const prevText = String(prevMsgs[0].data?.text ?? prevMsgs[0].data?.content ?? '')
-          if (curText && prevText) {
-            // Simple word-overlap similarity (no LLM needed, deterministic)
-            const curWords = new Set(curText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
-            const prevWords = new Set(prevText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
-            if (curWords.size > 0 && prevWords.size > 0) {
-              let overlap = 0
-              for (const w of curWords) {
-                if (prevWords.has(w)) overlap++
-              }
-              const similarity = overlap / Math.min(curWords.size, prevWords.size)
-              // >0.7 word overlap → user is likely restating the same task
-              if (similarity > 0.7) {
-                implicitNegative = true
-              }
+        const curText = findUserMessageText(events, turn)
+        const prevText = findUserMessageText(events, turn - 1)
+        if (curText && prevText) {
+          // Simple word-overlap similarity (no LLM needed, deterministic)
+          const curWords = new Set(curText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
+          const prevWords = new Set(prevText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
+          if (curWords.size > 0 && prevWords.size > 0) {
+            let overlap = 0
+            for (const w of curWords) {
+              if (prevWords.has(w)) overlap++
+            }
+            const similarity = overlap / Math.min(curWords.size, prevWords.size)
+            // >0.7 word overlap → user is likely restating the same task
+            if (similarity > 0.7) {
+              implicitNegative = true
             }
           }
         }
@@ -352,18 +407,9 @@ export function apply(ctx: Context, config: Config): void {
     let taskPattern: string | null = null
     try {
       const events = agent.session.events ?? []
-      const firstUserMsg = events.find((e: any) => e.type === 'user/message' && e.data?.turn === turn)
-      // Q1: Handle ContentPart[] — same as O8 fix in pre-step
-      let msgText = ''
-      const rawContent = firstUserMsg?.data?.text ?? firstUserMsg?.data?.content ?? ''
-      if (typeof rawContent === 'string') {
-        msgText = rawContent
-      } else if (Array.isArray(rawContent)) {
-        msgText = rawContent
-          .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
-          .map((p: any) => typeof p === 'string' ? p : p.text)
-          .join(' ')
-      }
+      // dsh user/message events carry data: UserMessage (no `turn`/`text` field);
+      // use the turn boundary helper to get the real user prompt text.
+      const msgText = findUserMessageText(events, turn)
       if (msgText) {
         taskPattern = inferTaskPattern(msgText)
       }
@@ -663,20 +709,11 @@ export function apply(ctx: Context, config: Config): void {
     ) => {
       const resolved = await next()
       try {
-        // Infer task pattern from the agent's session (best-effort, same as pre-step)
+        // Infer task pattern from the agent's session (best-effort, same as turn-stopping)
         let taskPattern: string | null = null
         try {
           const events = payload.agent.session.events ?? []
-          const firstMsg = events.find((e: any) => e.type === 'user/message')
-          let msgText = ''
-          const raw = firstMsg?.data?.text ?? firstMsg?.data?.content ?? ''
-          if (typeof raw === 'string') msgText = raw
-          else if (Array.isArray(raw)) {
-            msgText = raw
-              .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
-              .map((p: any) => typeof p === 'string' ? p : p.text)
-              .join(' ')
-          }
+          const msgText = findUserMessageText(events, payload.turn)
           if (msgText) taskPattern = inferTaskPattern(msgText)
         } catch { /* ignore */ }
 
