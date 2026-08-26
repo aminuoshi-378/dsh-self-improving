@@ -598,6 +598,7 @@ test('import experiences with deduplication', () => {
       reuseCount: 0,
       createdAt: Date.now(),
       actions: '{}',
+      source: 'model-inferred',
     },
     {
       id: 'import-1',
@@ -612,6 +613,7 @@ test('import experiences with deduplication', () => {
       reuseCount: 0,
       createdAt: Date.now() - 1000,
       actions: '{"tools":[]}',
+      source: 'tool-derived',
     },
     {
       id: 'import-2',
@@ -626,6 +628,7 @@ test('import experiences with deduplication', () => {
       reuseCount: 2,
       createdAt: Date.now() - 500,
       actions: '{}',
+      source: 'model-inferred',
     },
     {
       id: 'invalid-1', // missing required fields

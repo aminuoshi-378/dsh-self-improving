@@ -149,7 +149,10 @@ function appendPreference(filePath: string, preference: string): boolean {
 
   try {
     mkdirSync(dirname(filePath), { recursive: true })
-    writeFileSync(filePath, content, 'utf-8')
+    // J5: Atomic write via temp file + rename to avoid concurrent write corruption
+    const tmpPath = `${filePath}.tmp.${process.pid}`
+    writeFileSync(tmpPath, content, 'utf-8')
+    require('node:fs').renameSync(tmpPath, filePath)
     return true
   } catch {
     return false
@@ -285,15 +288,20 @@ async function tryLLMComplete(ctx: any, prompt: string): Promise<string | null> 
     const llm = ctx.get?.('llm')
     if (!llm || typeof llm.stream !== 'function') return null
 
+    // J6: Timeout protection — abort after 30s to prevent blocking maintenance
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
+
     // Build a minimal model request and collect streamed text
     const chunks: string[] = []
-    for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }] })) {
+    for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }], signal: controller.signal })) {
       if (chunk?.type === 'text-delta' && chunk.text) {
         chunks.push(chunk.text)
       } else if (typeof chunk === 'string') {
         chunks.push(chunk)
       }
     }
+    clearTimeout(timeout)
     return chunks.length > 0 ? chunks.join('') : null
   } catch {
     return null
@@ -420,7 +428,10 @@ If no high-confidence preferences can be extracted, return an empty array: []`
       } else {
         content = `${existing}\n## Auto-distilled\n\n${line}\n`
       }
-      writeFileSync(prefPath, content, 'utf-8')
+      // J5: Atomic write via temp file + rename
+      const tmpPath = `${prefPath}.tmp.${process.pid}`
+      writeFileSync(tmpPath, content, 'utf-8')
+      require('node:fs').renameSync(tmpPath, prefPath)
       added++
     }
     return added
@@ -445,6 +456,7 @@ export function apply(ctx: Context, config: Config): void {
     injectedThisTurn: boolean  // P0: track if already injected this turn
     taskUnitId: string        // P-C: ULID grouping turns into a task unit
     goalId: string | null     // P-C: dsh goal id if goal-driven
+    lastInjectedIds: string[] // J7: ids of experiences injected in the last turn
   }>()
 
   // P-C: Track active task unit per agent (for cross-turn aggregation)
@@ -480,6 +492,7 @@ export function apply(ctx: Context, config: Config): void {
       agentTools.set(agent.id, {
         tools: [], sessionId: agent.id, stepCount: 0, injectedThisTurn: false,
         taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
+        lastInjectedIds: [],
       })
     }
     agentTools.get(agent.id)!.tools.push({
@@ -734,6 +747,7 @@ export function apply(ctx: Context, config: Config): void {
         toolsUsed,
         stepCount,
         difficulty,
+        injectedIds: entry.lastInjectedIds, // J7: pass injected ids for precise boost
       })
     }
 
@@ -762,8 +776,26 @@ export function apply(ctx: Context, config: Config): void {
         const entry = agentTools.get(agent.id)!
         entry.stepCount = Math.max(entry.stepCount, step)
       } else {
+        // J1: Resolve task unit same as tools/result handler
+        let taskUnit = agentTaskUnits.get(agent.id)
+        if (!taskUnit) {
+          let goalId: string | null = null
+          try {
+            const goalService = ctx.get('goals')
+            if (goalService && typeof goalService.get === 'function') {
+              const goal = goalService.get(agent)
+              if (goal && goal.phase === 'active') {
+                goalId = goal.id
+              }
+            }
+          } catch { /* goal service not available */ }
+          taskUnit = { taskUnitId: ulid(), goalId, turns: 0 }
+          agentTaskUnits.set(agent.id, taskUnit)
+        }
         agentTools.set(agent.id, {
           tools: [], sessionId: agent.id, stepCount: step, injectedThisTurn: false,
+          taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
+          lastInjectedIds: [],
         })
       }
 
@@ -853,6 +885,8 @@ export function apply(ctx: Context, config: Config): void {
 
           // P0: Mark as injected for this turn
           entry.injectedThisTurn = true
+          // J7: Record which experiences were injected for precise confidence boosting
+          entry.lastInjectedIds = selected.map(r => r.id)
 
           // Inject advisory context: prepend our message to the decision's messages
           if (decision.kind === 'enter') {
@@ -887,6 +921,23 @@ export function apply(ctx: Context, config: Config): void {
           lines.push('')
         }
 
+        // J4: Inject atomic facts for current workspace
+        try {
+          const facts = store.queryFacts()
+          const effective = facts.filter(f => f.predicate === 'effective-tool-sequence')
+          const failed = facts.filter(f => f.predicate === 'failed-tool-sequence')
+          if (effective.length > 0 || failed.length > 0) {
+            if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
+            for (const f of effective) {
+              lines.push(`- Effective tool sequence: ${f.object}`)
+            }
+            for (const f of failed) {
+              lines.push(`- Failed tool sequence: ${f.object}`)
+            }
+            lines.push('')
+          }
+        } catch { /* ignore */ }
+
         // Live stats (kept as supplementary signal)
         const stats = store.stats()
         if (stats.total >= 10) {
@@ -918,6 +969,7 @@ export function apply(ctx: Context, config: Config): void {
     toolsUsed: string[]
     stepCount?: number
     difficulty?: 'low' | 'medium' | 'high'
+    injectedIds?: string[] // J7: ids of experiences injected in the turn that produced this reflection
   }
   const pendingReflections: PendingReflection[] = []
 
@@ -953,15 +1005,34 @@ export function apply(ctx: Context, config: Config): void {
       }
       store.updateLesson(entry.expId, reflection)
 
-      // I6: Boost confidence on similar past experiences if this was positive
-      if (entry.outcomeScore >= 0.7) {
-        const similar = store.query({ toolsUsed: entry.toolsUsed, limit: 5, minScore: 0.6 })
-        for (const rec of similar) {
-          if (rec.id !== entry.expId) {
-            store.boostConfidence(rec.id)
+      // I6/J7: Boost confidence on experiences that were injected in this turn if outcome was positive
+      if (entry.outcomeScore >= 0.7 && entry.injectedIds && entry.injectedIds.length > 0) {
+        for (const id of entry.injectedIds) {
+          if (id !== entry.expId) {
+            store.boostConfidence(id)
+          }
+        }
+        log(`J7: boosted ${entry.injectedIds.length} injected experiences (positive outcome)`)
+      }
+    }
+
+    // J2: Detect and resolve atomic fact conflicts
+    // Evict lower-source-weight facts when same subject+predicate has different objects
+    try {
+      const conflicts = store.detectFactConflicts()
+      if (conflicts.length > 0) {
+        log(`J2: detected ${conflicts.length} fact conflicts`)
+        for (const conflict of conflicts) {
+          // The first item has the highest source weight (sorted by detectFactConflicts)
+          // Evict all others
+          for (let i = 1; i < conflict.conflicts.length; i++) {
+            store.evictFact(conflict.conflicts[i].id)
+            log(`J2: evicted fact ${conflict.conflicts[i].id} (${conflict.subject}/${conflict.predicate}=${conflict.conflicts[i].object}) in favor of ${conflict.conflicts[0].object}`)
           }
         }
       }
+    } catch (err) {
+      log(`fact conflict detection error: ${(err as Error).message}`)
     }
 
     // C5: Merge fragmented lessons if enough have accumulated

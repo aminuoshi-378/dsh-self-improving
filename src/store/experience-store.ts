@@ -984,6 +984,8 @@ export class ExperienceStore {
       reuseCount: rec.reuseCount,
       createdAt: rec.createdAt,
       actions: rec.actions,
+      source: rec.source,
+      contentHash: rec.contentHash,
     }))
   }
 
@@ -1010,6 +1012,8 @@ export class ExperienceStore {
       reuseCount: rec.reuseCount,
       createdAt: rec.createdAt,
       actions: rec.actions,
+      source: rec.source,
+      contentHash: rec.contentHash,
     }))
   }
 

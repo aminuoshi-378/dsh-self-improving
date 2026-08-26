@@ -273,6 +273,8 @@ export interface ExportedExperience {
   reuseCount: number
   createdAt: number
   actions: string
+  source: string
+  contentHash: string | null
 }
 
 /**
@@ -294,6 +296,8 @@ export function isValidImportedExperience(obj: unknown): obj is ExportedExperien
     typeof r.confidence === 'number' &&
     typeof r.reuseCount === 'number' &&
     typeof r.createdAt === 'number' &&
-    typeof r.actions === 'string'
+    typeof r.actions === 'string' &&
+    // J3: source is required, contentHash is optional (may be null for old exports)
+    typeof r.source === 'string'
   )
 }
