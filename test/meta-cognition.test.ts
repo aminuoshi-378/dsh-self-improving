@@ -72,6 +72,8 @@ function createAndStoreExperience(
     toolSuccessRate: score,
     guardTriggerCount: 0,
     userFeedback: feedback as 'positive' | 'negative' | 'none',
+    stepEfficiency: 0.9,
+    difficulty: score < 0.5 ? 'high' : 'medium',
     outcomeScore: score,
     timestamp: Date.now(),
   }
@@ -79,7 +81,7 @@ function createAndStoreExperience(
   return store.store(outcome, {
     taskPattern,
     toolsUsed: tools,
-    workspaceDigest: 'digest-1',
+    workspaceDigest: `digest-${Math.random()}`,
     actions: JSON.stringify({
       tools: tools.map((t) => ({ tool: t, ok: score > 0.5, ms: 100 })),
       guards: [],
@@ -363,6 +365,161 @@ test('get records needing reflection', () => {
     !needsReflection.some((r) => r.id === id2),
     'should not include the record that already has a lesson',
   )
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P4 Test 9: Lesson is stored as structured JSON (Reflection)
+// ---------------------------------------------------------------------------
+
+test('lesson is stored as structured JSON after reflection', async () => {
+  const store = new ExperienceStore()
+  const engine = new MetaCognitionEngine(store, null)
+
+  const id = createAndStoreExperience(store, 0.85, 'bugfix', ['grep', 'read_file'], 'positive')
+
+  engine.queueReflection({
+    experienceId: id,
+    turnId: 'turn-1',
+    sessionId: 'session-1',
+    actions: JSON.stringify({
+      tools: [
+        { tool: 'grep', ok: true, ms: 100 },
+        { tool: 'read_file', ok: true, ms: 200 },
+      ],
+      guards: [],
+      goalProgress: 'advanced',
+      feedback: 'positive',
+    }),
+    outcomeScore: 0.85,
+    userFeedback: 'positive',
+    toolsUsed: ['grep', 'read_file'],
+    stepCount: 2,
+    difficulty: 'low',
+  })
+
+  await engine.processQueue()
+
+  const rec = store.getById(id)
+  assert(rec!.lesson !== null, 'lesson should be set')
+
+  // P4: lesson should be parseable as JSON with Reflection fields
+  const lessonData = JSON.parse(rec!.lesson!)
+  assert(lessonData.whatWorked !== undefined, 'should have whatWorked field')
+  assert(lessonData.whatFailed !== undefined, 'should have whatFailed field')
+  assert(lessonData.whatToTryDifferently !== undefined, 'should have whatToTryDifferently field')
+  assert(lessonData.reusableLesson !== undefined, 'should have reusableLesson field')
+  assert(
+    typeof lessonData.reusableLesson === 'string' && lessonData.reusableLesson.length > 0,
+    'reusableLesson should be a non-empty string',
+  )
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P2 Test 10: Lesson merging consolidates similar lessons
+// ---------------------------------------------------------------------------
+
+test('lesson merging consolidates similar lessons', async () => {
+  const store = new ExperienceStore()
+
+  // Create many similar experiences with lessons
+  const ids: string[] = []
+  for (let i = 0; i < 25; i++) {
+    const id = store.store(
+      {
+        turnId: `turn-${i}`,
+        sessionId: 'session-1',
+        goalProgress: 'advanced',
+        toolCallCount: 3,
+        toolSuccessRate: 0.9,
+        guardTriggerCount: 0,
+        userFeedback: 'positive',
+        stepEfficiency: 0.9,
+        difficulty: 'high',
+        outcomeScore: 0.8,
+        timestamp: Date.now() + i,
+      },
+      {
+        taskPattern: 'bugfix',
+        toolsUsed: ['grep', 'read_file', 'edit_file'],
+        workspaceDigest: `ws-${i}`,
+        actions: '{}',
+      },
+    )
+    store.updateLesson(id, {
+      whatWorked: `Approach ${i} worked`,
+      whatFailed: `Issue ${i} occurred`,
+      whatToTryDifferently: `Try ${i}`,
+      reusableLesson: `Lesson ${i}: use grep to find the issue`,
+    })
+    ids.push(id)
+  }
+
+  // Check that lesson groups can be detected
+  const groups = store.getUnmergedLessonGroups()
+  assert(groups.length > 0, `should find at least 1 group, got ${groups.length}`)
+  assert(groups[0].records.length >= 2, 'group should have multiple records')
+
+  // Merge lessons
+  const mergeResult = store.mergeLessons(
+    groups[0].records.map((r) => r.id),
+    {
+      whatWorked: 'Consolidated: grep is effective for finding issues',
+      whatFailed: 'Various issues occurred',
+      whatToTryDifferently: 'Use grep with more specific patterns',
+      reusableLesson: 'For bugfix tasks, always start with grep to locate the issue, then read and edit',
+    },
+    'high',
+    ['grep', 'read_file', 'edit_file'],
+  )
+
+  assert(mergeResult.length > 0, 'should return a new merged record id')
+
+  // Original records should be marked as merged
+  for (const id of groups[0].records.map((r) => r.id)) {
+    const rec = store.getById(id)
+    assert(rec!.merged === true, `record ${id} should be marked as merged`)
+  }
+
+  // Merged record should be in old gen
+  const merged = store.getById(mergeResult)
+  assert(merged !== null, 'merged record should exist')
+  assert(merged!.generation === 1, 'merged record should be in old gen')
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P2 Test 11: Reflection prompt includes step count and difficulty
+// ---------------------------------------------------------------------------
+
+test('reflection prompt includes step count and difficulty', async () => {
+  const store = new ExperienceStore()
+  const llm = new MockLLMClient()
+  const engine = new MetaCognitionEngine(store, llm)
+
+  const id = createAndStoreExperience(store, 0.5, 'bugfix', ['grep'], 'none')
+
+  engine.queueReflection({
+    experienceId: id,
+    turnId: 'turn-7',
+    sessionId: 'session-step-test',
+    actions: '{"tools":[{"tool":"grep","ok":true,"ms":100}]}',
+    outcomeScore: 0.5,
+    userFeedback: 'none',
+    toolsUsed: ['grep'],
+    stepCount: 7,
+    difficulty: 'high',
+  })
+
+  await engine.processQueue()
+
+  assert(llm.lastPrompt.includes('session-step-test'), 'prompt should contain session id')
+  assert(llm.lastPrompt.includes('Steps: 7'), `prompt should contain step count, got: ${llm.lastPrompt}`)
+  assert(llm.lastPrompt.includes('Difficulty: high'), `prompt should contain difficulty`)
 
   store.close()
 })

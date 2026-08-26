@@ -34,6 +34,9 @@ interface PendingReflection {
   actions: string
   outcomeScore: number
   userFeedback: string
+  toolsUsed?: string[]
+  stepCount?: number
+  difficulty?: 'low' | 'medium' | 'high'
 }
 
 export class MetaCognitionEngine {
@@ -64,6 +67,9 @@ export class MetaCognitionEngine {
     actions: string
     outcomeScore: number
     userFeedback: string
+    toolsUsed?: string[]
+    stepCount?: number
+    difficulty?: 'low' | 'medium' | 'high'
   }): void {
     if (!this.enabled) return
 
@@ -150,6 +156,7 @@ export class MetaCognitionEngine {
     const whatToTryDifferently = this.deriveAlternative(entry, guardCount)
     const reusableLesson = this.deriveLesson(entry, whatWorked, whatFailed)
 
+    // Store full Reflection as JSON (P4: structured information)
     return {
       whatWorked,
       whatFailed,
@@ -168,31 +175,40 @@ export class MetaCognitionEngine {
    * Output: structured JSON with what_worked, what_failed, etc.
    */
   private buildReflectionPrompt(entry: PendingReflection): string {
+    const stepInfo = entry.stepCount ? `\n- Steps: ${entry.stepCount}` : ''
+    const diffInfo = entry.difficulty ? `\n- Difficulty: ${entry.difficulty}` : ''
+    const toolsInfo = entry.toolsUsed && entry.toolsUsed.length > 0
+      ? `\n- Tools Used: ${entry.toolsUsed.join(' → ')}`
+      : ''
+
     return `You are a meta-cognition engine. Analyze the following agent turn and produce a structured reflection.
 
 ## Turn Data
 - Session: ${entry.sessionId}
 - Turn: ${entry.turnId}
 - Outcome Score: ${entry.outcomeScore.toFixed(2)} (0.0 = poor, 1.0 = excellent)
-- User Feedback: ${entry.userFeedback}
+- User Feedback: ${entry.userFeedback}${stepInfo}${diffInfo}${toolsInfo}
 - Actions: ${entry.actions}
 
 ## Task
 Reflect on this turn's decision path and extract reusable lessons.
 
 Consider:
-1. What tool selection and sequencing led to good results?
-2. What caused failures or inefficiencies?
-3. What would you try differently next time in a similar situation?
-4. What is the single most reusable lesson?
+1. Analyze the SPECIFIC actions in the actions JSON — what individual tool calls succeeded or failed and why
+2. What specific tool selection, sequencing, or configuration led to good results?
+3. What caused failures or inefficiencies? Be concrete (e.g., "forgot to handle Promise rejection", "missing error check after write")
+4. What would you try differently next time in a similar situation?
+5. What is the single most actionable, context-specific lesson?
+
+Important: The reusable_lesson must be specific and actionable, not a generic observation like "tool X is good". Include concrete context about WHEN and WHY this pattern matters.
 
 ## Output Format
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
-  "what_worked": "concise description of what worked",
-  "what_failed": "concise description of what failed",
+  "what_worked": "concise description of what worked, with specific context",
+  "what_failed": "concise description of what failed, with specific context",
   "what_to_try_differently": "concise suggestion for next time",
-  "reusable_lesson": "a single actionable lesson, under 50 words"
+  "reusable_lesson": "a single actionable, context-specific lesson, under 50 words"
 }`
   }
 
@@ -247,7 +263,8 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   ): string {
     if (entry.outcomeScore >= 0.7) {
       if (toolNames.length > 0) {
-        return `Tool sequence [${toolNames.join(' → ')}] achieved a good outcome (score: ${entry.outcomeScore.toFixed(2)})`
+        const stepInfo = entry.stepCount ? ` in ${entry.stepCount} steps` : ''
+        return `Tool sequence [${toolNames.join(' → ')}]${stepInfo} achieved a good outcome (score: ${entry.outcomeScore.toFixed(2)})`
       }
       return `Turn achieved a good outcome (score: ${entry.outcomeScore.toFixed(2)})`
     }
@@ -300,6 +317,88 @@ Respond with ONLY valid JSON (no markdown, no explanation):
       return `Poor outcome: ${whatFailed.toLowerCase()} — try a different approach next time`
     }
     return `Mixed outcome (score: ${entry.outcomeScore.toFixed(2)}): ${whatWorked.toLowerCase()}, but ${whatFailed.toLowerCase()}`
+  }
+
+  // -------------------------------------------------------------------------
+  // P2: Lesson merging
+  // -------------------------------------------------------------------------
+
+  /**
+   * P2: Merge fragmented lessons periodically.
+   * Called after processing reflections if enough unmerged lessons have accumulated.
+   * Uses LLM if available to summarize common patterns.
+   */
+  async mergeLessonsIfNeeded(): Promise<number> {
+    const groups = this.store.getUnmergedLessonGroups()
+    if (groups.length === 0) return 0
+
+    let merged = 0
+    for (const group of groups) {
+      if (group.records.length < 2) continue
+
+      let mergedLesson: Reflection
+
+      if (this.llm) {
+        try {
+          mergedLesson = await this.llmMergeLessons(group.records)
+        } catch {
+          mergedLesson = this.ruleBasedMergeLessons(group.records)
+        }
+      } else {
+        mergedLesson = this.ruleBasedMergeLessons(group.records)
+      }
+
+      const sourceIds = group.records.map((r) => r.id)
+      const tools = group.records[0].toolsUsed ?? []
+      this.store.mergeLessons(sourceIds, mergedLesson, group.records[0].difficulty, tools)
+      merged++
+    }
+
+    return merged
+  }
+
+  private async llmMergeLessons(records: ExperienceRecord[]): Promise<Reflection> {
+    const lessons = records.map((r) => {
+      try { return JSON.parse(r.lesson ?? '{}') } catch { return { reusable_lesson: r.lesson ?? '' } }
+    })
+
+    const prompt = `You are a lesson consolidation engine. Merge these related lessons into a single consolidated lesson.
+
+## Input Lessons
+${JSON.stringify(lessons, null, 2)}
+
+## Task
+Find the common pattern across these lessons and produce a single, more general but still actionable lesson.
+
+## Output Format
+Respond with ONLY valid JSON:
+{
+  "what_worked": "merged description of what worked",
+  "what_failed": "merged description of what failed",
+  "what_to_try_differently": "merged suggestion",
+  "reusable_lesson": "a single consolidated, actionable lesson, under 50 words"
+}`
+
+    const response = await this.llm!.complete(prompt)
+    return this.parseReflectionResponse(response)
+  }
+
+  private ruleBasedMergeLessons(records: ExperienceRecord[]): Reflection {
+    const lessons = records.map((r) => {
+      try {
+        const parsed = JSON.parse(r.lesson ?? '{}')
+        return parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson ?? ''
+      } catch {
+        return r.lesson ?? ''
+      }
+    })
+
+    return {
+      whatWorked: `Consolidated from ${records.length} experiences`,
+      whatFailed: 'See individual records for specific failures',
+      whatToTryDifferently: 'Apply the consolidated lesson',
+      reusableLesson: lessons.filter((l) => l.length > 0).join('; ') || 'No specific lesson extracted',
+    }
   }
 
   // -------------------------------------------------------------------------

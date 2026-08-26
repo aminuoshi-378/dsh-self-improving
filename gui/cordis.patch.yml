@@ -1,0 +1,6 @@
+# dsh-self-improving-gui — client bundle patch
+# Declares the browser plugin row the web app mounts.
+- insert:
+    - id: dsh-self-improving-gui
+      name: dsh-self-improving-gui
+      config: {}

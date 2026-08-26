@@ -6,24 +6,70 @@
 
 ## [Unreleased]
 
-### 新增
-- **`dsh-rule-enforcement` 插件包** — 用户软规则注入
-  - 极简插件：把用户编辑的一段 markdown 软规则文本（经 `$DSH_HOME/settings.yaml` 或 WebUI 修改）作为**建议**注入 agent 系统提示词（`systemPrompt.section`，order 100）
-  - 仅软规则：移除硬性红色拦截规则
-  - 热加载：改动无需重启即生效（`settings.watch`）
-  - `dsh-rule-enforcement-gui@0.1.3` — WebUI Rules 编辑页（Settings → Plugins → Rules）
-    - 通过 `ctx.settingsScope.bind` 读写（修复：`Cannot read properties of undefined (reading 'save')` — slot 系统把 inject 注入面平铺成顶层 props，而非嵌套 `inject` 对象）
-  - 文档：精简中英文 README（只保留命令与简要说明）
-  - 修复：`getRulesFilePath` 测试改用 `normalize()` 进行跨平台路径分隔符比较（Windows 上原会失败）
-  - 文档：按 AGENTS.md 恢复英文 `README.md` 并与 `README.zh-CN.md` 同步；GUI 子 README 不再硬编码过时的 tarball 版本号
-  - 修复：`better-sqlite3@11` → `^12.11.1`，并新增 `.npmrc`（npmmirror 预编译镜像），使原生模块在 Node 24 下无需 VS C++ 工具链即可安装（v11 无 Node-24 预编译，会回退到失败的 `node-gyp`）
+### 新增 — P0-P4 缺陷修复
 
-### 本次安装插件的实战经验（Windows / Node 环境）
-整个 `dsh plugin` 安装链路在 Windows 上踩过的坑与改动，均已有对应修复：
-1. **Node 版本**：dsh 依赖的 `better-sqlite3@11` 无 Node 24 预编译；本仓库已升到 `@12` 支持 Node 24；而 dsh 仓库内部仍锁 v11，需切到 **Node 22**（自带 abi127 预编译）。已在用户环境装 nvm-windows + Node 22.20.0，并把 nvm 符号链接目录前置到系统 PATH。
-2. **预编译二进制镜像**：better-sqlite3 默认从 GitHub 下载，国内常 `ECONNRESET`/`Request timed out`。修复：`.npmrc` 设 `better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3`。**注意 host 必须带包名段** `/binary/better-sqlite3`（仅 `/binary` 会拼出错误 URL）。
-3. **`allowBuilds`**：dsh profile（`~/.dsh/profiles/web/pnpm-workspace.yaml`）里 `better-sqlite3: set this to true or false` 是待填占位符，pnpm 因此忽略构建脚本报 `ERR_PNPM_IGNORED_BUILDS`。修复：改为 `better-sqlite3: true`。
-4. **端口占用**：若已有残留的旧 dsh web 进程占用 `127.0.0.1:3080`，重启会 `EADDRINUSE`。需停掉旧进程后再 `dsh web`。
+#### P0 — 核心体验缺陷修复
+- **每 turn 只注入一次经验**：`agent/pre-step` 改为仅在 turn 的第一个 step 注入，后续 step 跳过，避免同一段经验在 turn 内重复注入
+- **经验去重**：query 结果按 `context_hash` 去重，相同工具序列只保留最新一条
+- **加入工具调用步数效率维度**：评分公式新增 `stepEfficiency` 维度（`max(0, 1 - (stepCount - 1) * 0.05)`），权重重新分配为 goalProgress 0.3 + toolSuccess 0.2 + stepEfficiency 0.25 + guardPenalty 0.15 + userFeedback 0.1
+- **区分任务难度**：新增 `difficulty` 字段（low/medium/high），存储和注入时高难度经验优先，简单任务经验只在不足时填充
+
+#### P1 — 评分准确性修复
+- **隐式负反馈信号**：不再依赖用户主动点赞/踩，改为被动观测——用户中断 agent（turn/end reason=aborted）、同 turn 内用户追问/纠正 → `negative`；无负信号 → `neutral`（0.6，不等于 positive）
+- **接入 goal 服务**：优先用 `ctx.get('goals').get(agent)` 获取真实 goal phase
+- **评分区分度提升**：步数维度加入后，分数范围从 0.9 扩展到 0.275-0.9875
+
+#### P2 — lesson 质量提升
+- **结构化 lesson 生成**：rule-based 反思生成完整 `{whatWorked, whatFailed, whatToTryDifferently, reusableLesson}` JSON，而非纯文本
+- **可操作性增强**：lesson 包含具体场景信息（步数、难度、失败工具），LLM prompt 要求分析具体 actions JSON 内容
+- **同步触发 lesson 生成**：turn-stopping 中同步入队反思，maintenance 时处理
+- **定期合并 lesson**：每积累 20 条 lesson 后按 difficulty + 工具序列聚类合并，被合并的旧 lesson 标记 `merged: true`，合并产物直接进老年代
+
+#### P3 — 健壮性提升
+- **注入内容动态控制**：按难度分配注入条数（high 最多 5 条、medium 2 条、low 不足时填充），token 预算控制（总长度 ≤ 8000 字符）
+- **分代经验管理**：借鉴 JVM 分代 GC，新生代（200 条）+ 老年代（800 条）双区域管理，新增 `generation`、`last_injected_at`、`merged` 字段
+
+#### P4 — 召回策略优化
+- **两阶段召回**：粗筛（SQL filter + context_hash 精确匹配）+ 精筛（outcome_score × 0.4 + 工具相似度 × 0.3 + 时间近度 × 0.3）
+- **筛选范围动态伸缩**：< 50 条全量参与、50-200 条粗筛 top 20、> 200 条粗筛 top 50
+- **结构化信息落库**：lesson 字段存储完整 Reflection JSON，注入时提取 `reusableLesson` 字段，兼容旧数据纯文本
+
+#### 测试新增
+- experience-store: 3 个新测试（去重、难度优先排序、两阶段召回）
+- outcome-evaluator: 2 个新测试（步数效率区分、难度分类）
+- behavior-adapter: 3 个新测试（难度优先注入、动态注入适配、结构化 lesson 提取）
+- meta-cognition: 3 个新测试（JSON lesson 存储、lesson 合并、prompt 包含步数和难度）
+- 总计从 29 个测试增加到 40 个，全部通过
+
+### 新增 — P5 可选增强
+
+#### P5-1 — 按任务类型分类经验
+- **`inferTaskPattern()` 函数**：从用户首条消息关键词推断任务类型（bugfix/feature/refactoring/search/test-writing/general）
+- **存储环节**：turn-stopping 中自动推断 task_pattern 并存入经验库（之前一直存 NULL）
+- **注入环节**：agent/pre-step 中按当前任务的 task_pattern 优先匹配同类经验
+- **查询**：支持 `exportByTaskPattern()` 按任务类型导出经验
+
+#### P5-2 — WebUI 可视化经验库
+- **`dsh-self-improving-gui` 插件包**（`gui/` 目录）
+  - WebUI Settings → Plugins → Experiences 页面
+  - 展示经验库统计：总数、平均分、含 lesson 数、正/负反馈数、高难度数、新生代/老年代数、合并数
+  - 通过 `ctx.settingsScope.bind` 读写（与 dsh-self-improving host 插件桥接）
+  - React 组件：`ExperiencesPanel.tsx`，统计表格 + 导入/导出按钮
+
+#### P5-3 — 前端导入/导出经验
+- **导出**：点击"Export"按钮，后端全量导出为 JSON 文件，浏览器下载
+  - 格式：`[{id, outcomeScore, toolsUsed, lesson, difficulty, taskPattern, generation, merged, ...}, ...]`
+  - 文件名：`experiences-export-{date}.json`
+- **导入**：点击"Import"选择 JSON 文件，预检显示条数，确认后写入
+  - 按 `id` 去重，已存在的跳过
+  - 导入的经验统一进新生代（generation=0），按正常流程参与晋升
+  - 导入前预检：校验 JSON 格式和字段完整性，显示"将导入 N 条，其中 M 条重复"
+- **`importExperiences()` / `exportAll()` 方法**：ExperienceStore 新增导入导出 API
+- **`isValidImportedExperience()` 校验函数**：类型安全的导入数据校验
+
+#### P5 测试新增
+- experience-store: 4 个新测试（全量导出、按任务类型导出、导入去重、任务类型推断）
+- 总计从 40 个测试增加到 44 个，全部通过
 
 ### 计划中
 - **阶段 4** — 自适应策略调整（Adaptive Strategy Adjustment）

@@ -1,0 +1,49 @@
+{
+  "name": "dsh-self-improving-gui",
+  "version": "0.1.0",
+  "description": "Experiences viewer tab for dsh Web Settings (view, export, import agent experiences)",
+  "type": "module",
+  "main": "lib/index.mjs",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.mjs"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.client.json",
+    "bundle": "tsdown",
+    "watch": "tsdown --watch"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.31",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3"
+  },
+  "peerDependenciesMeta": {},
+  "files": [
+    "lib/index.mjs",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml"
+  ]
+}

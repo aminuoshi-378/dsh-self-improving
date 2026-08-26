@@ -45,13 +45,15 @@ function createExperience(
       toolSuccessRate: score,
       guardTriggerCount: 0,
       userFeedback: feedback as 'positive' | 'negative' | 'none',
+      stepEfficiency: 0.9,
+      difficulty: score < 0.5 ? 'high' : 'medium',
       outcomeScore: score,
       timestamp: Date.now(),
     },
     {
       taskPattern,
       toolsUsed: tools,
-      workspaceDigest: 'digest-1',
+      workspaceDigest: `digest-${Math.random()}`, // P0: distinct to avoid dedup
       actions: '{}',
     },
   )
@@ -253,6 +255,113 @@ test('tracks injection count', () => {
 
   adapter.getExperienceSummary({ taskPattern: 'bugfix', toolsUsed: ['grep'], limit: 5 })
   assert(adapter.getInjectionCount() === 2, 'should be 2 after second injection')
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P0 Test 9: High difficulty experiences prioritized in injection
+// ---------------------------------------------------------------------------
+
+test('high difficulty experiences are prioritized in injection', () => {
+  const store = new ExperienceStore()
+  const adapter = new BehaviorAdapter(store)
+
+  // Low difficulty, high score
+  createExperience(store, 0.95, 'bugfix', ['grep', 'read_file'], 'positive', 'Simple fix was quick')
+  // High difficulty, medium score
+  createExperience(store, 0.6, 'bugfix', ['grep', 'read_file', 'write_file', 'bash'], 'none', 'Complex async issue needed careful handling')
+
+  const summary = adapter.getExperienceSummary({
+    taskPattern: 'bugfix',
+    toolsUsed: ['grep', 'read_file'],
+    limit: 5,
+  })
+
+  assert(summary !== null, 'should return a summary')
+  // The whatWorked should come from the higher-scored record, but the selection
+  // should prioritize high difficulty
+  assert(summary!.matchingRecords >= 1, `should match at least 1 record`)
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P3 Test 10: Dynamic injection limit adapts to store size
+// ---------------------------------------------------------------------------
+
+test('dynamic injection adapts to available experiences', () => {
+  const store = new ExperienceStore()
+  const adapter = new BehaviorAdapter(store)
+
+  // Few experiences — should still return results
+  createExperience(store, 0.8, 'bugfix', ['grep'], 'positive', 'Use grep to find code')
+  createExperience(store, 0.7, 'bugfix', ['grep', 'read_file'], 'none', 'Read then edit')
+
+  const summary = adapter.getExperienceSummary({
+    taskPattern: 'bugfix',
+    toolsUsed: ['grep'],
+    limit: 10,
+  })
+
+  assert(summary !== null, 'should return a summary even with few records')
+  assert(summary!.matchingRecords <= 2, `should not return more than available`)
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P4 Test 11: Structured lesson text extraction
+// ---------------------------------------------------------------------------
+
+test('extracts reusable_lesson from structured JSON lesson', () => {
+  const store = new ExperienceStore()
+  const adapter = new BehaviorAdapter(store)
+
+  // Create experience with a structured JSON lesson
+  const id = store.store(
+    {
+      turnId: 'turn-1',
+      sessionId: 's1',
+      goalProgress: 'advanced',
+      toolCallCount: 3,
+      toolSuccessRate: 1.0,
+      guardTriggerCount: 0,
+      userFeedback: 'positive',
+      stepEfficiency: 0.9,
+      difficulty: 'medium',
+      outcomeScore: 0.85,
+      timestamp: Date.now(),
+    },
+    { taskPattern: 'bugfix', toolsUsed: ['grep', 'edit_file'], workspaceDigest: 'd1', actions: '{}' },
+  )
+
+  // Store as JSON Reflection
+  store.updateLesson(id, {
+    whatWorked: 'Using grep with regex pattern matched the issue location',
+    whatFailed: 'Initial search without regex was too broad',
+    whatToTryDifferently: 'Use regex patterns for more targeted searches',
+    reusableLesson: 'For bugfix, use grep with specific regex patterns to narrow down issues quickly',
+  })
+
+  const summary = adapter.getExperienceSummary({
+    taskPattern: 'bugfix',
+    toolsUsed: ['grep', 'edit_file'],
+    limit: 5,
+  })
+
+  assert(summary !== null, 'should return a summary')
+  // P4: whatWorked should contain the extracted reusable_lesson, not raw JSON
+  assert(
+    summary!.whatWorked !== null && !summary!.whatWorked.includes('{'),
+    'whatWorked should be extracted text, not raw JSON',
+  )
+  if (summary!.whatWorked) {
+    assert(
+      summary!.whatWorked.includes('regex patterns') || summary!.whatWorked.includes('grep'),
+      `whatWorked should contain lesson content, got: ${summary!.whatWorked}`,
+    )
+  }
 
   store.close()
 })

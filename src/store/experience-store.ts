@@ -16,10 +16,13 @@ import type {
   ExperienceQuery,
   TurnOutcome,
   Reflection,
+  ExportedExperience,
 } from '../types/index.js'
+import { isValidImportedExperience } from '../types/index.js'
 
-const MAX_RECORDS = 1000
-const EVICTION_SCORE_THRESHOLD = 0.3
+const YOUNG_GEN_MAX = 200
+const OLD_GEN_MAX = 800
+const LESSON_MERGE_THRESHOLD = 20
 
 export class ExperienceStore {
   private db: DatabaseType
@@ -60,16 +63,41 @@ export class ExperienceStore {
         user_feedback TEXT,
         lesson TEXT,
 
+        difficulty TEXT DEFAULT 'medium',
+        generation INTEGER DEFAULT 0,
+        last_injected_at INTEGER,
+        merged INTEGER DEFAULT 0,
+
         tags TEXT,
         confidence REAL DEFAULT 1.0,
         reuse_count INTEGER DEFAULT 0
       );
+    `)
 
+    // Migration: add columns that may not exist in older databases
+    this.ensureColumn('difficulty', "TEXT DEFAULT 'medium'")
+    this.ensureColumn('generation', 'INTEGER DEFAULT 0')
+    this.ensureColumn('last_injected_at', 'INTEGER')
+    this.ensureColumn('merged', 'INTEGER DEFAULT 0')
+    this.ensureColumn('tags', 'TEXT')
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiences_context ON experiences(context_hash);
       CREATE INDEX IF NOT EXISTS idx_experiences_task ON experiences(task_pattern);
       CREATE INDEX IF NOT EXISTS idx_experiences_score ON experiences(outcome_score DESC);
       CREATE INDEX IF NOT EXISTS idx_experiences_created ON experiences(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_experiences_difficulty ON experiences(difficulty);
+      CREATE INDEX IF NOT EXISTS idx_experiences_generation ON experiences(generation);
+      CREATE INDEX IF NOT EXISTS idx_experiences_merged ON experiences(merged);
     `)
+  }
+
+  /** Add a column to the experiences table if it doesn't already exist (migration support). */
+  private ensureColumn(columnName: string, definition: string): void {
+    const cols = this.db.prepare('PRAGMA table_info(experiences)').all() as { name: string }[]
+    if (!cols.some((c) => c.name === columnName)) {
+      this.db.exec(`ALTER TABLE experiences ADD COLUMN ${columnName} ${definition}`)
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -99,11 +127,13 @@ export class ExperienceStore {
         id, session_id, turn_id, created_at,
         context_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
+        difficulty, generation, last_injected_at, merged,
         tags, confidence, reuse_count
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
         @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
+        @difficulty, @generation, @lastInjectedAt, @merged,
         @tags, @confidence, @reuseCount
       )
     `)
@@ -121,6 +151,10 @@ export class ExperienceStore {
       outcomeScore: outcome.outcomeScore,
       userFeedback: outcome.userFeedback,
       lesson: null,
+      difficulty: outcome.difficulty,
+      generation: 0,
+      lastInjectedAt: null,
+      merged: 0,
       tags: context.tags ? JSON.stringify(context.tags) : null,
       confidence: 1.0,
       reuseCount: 0,
@@ -136,6 +170,11 @@ export class ExperienceStore {
    * Update an experience record's lesson field after LLM reflection.
    * Called by the Meta-Cognition Engine (Layer 4).
    */
+  /**
+   * Update an experience record's lesson field after LLM reflection.
+   * Stores the full Reflection as JSON (P4: structured information).
+   * Falls back to plain text for legacy consumers.
+   */
   updateLesson(id: string, reflection: Reflection): void {
     const stmt = this.db.prepare(`
       UPDATE experiences
@@ -145,8 +184,15 @@ export class ExperienceStore {
 
     stmt.run({
       id,
-      lesson: reflection.reusableLesson,
+      lesson: JSON.stringify(reflection),
     })
+  }
+
+  /**
+   * Update lesson with a plain text string (legacy / rule-based fallback).
+   */
+  updateLessonText(id: string, lessonText: string): void {
+    this.db.prepare('UPDATE experiences SET lesson = ? WHERE id = ?').run(lessonText, id)
   }
 
   /**
@@ -157,11 +203,12 @@ export class ExperienceStore {
     const stmt = this.db.prepare(`
       UPDATE experiences
       SET reuse_count = reuse_count + 1,
-          confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1)
+          confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1),
+          last_injected_at = @now
       WHERE id = @id
     `)
 
-    stmt.run({ id })
+    stmt.run({ id, now: Date.now() })
   }
 
   /**
@@ -186,12 +233,30 @@ export class ExperienceStore {
    * Retrieve experiences matching a query (fuzzy context matching).
    * Uses weighted similarity on task pattern + tools + workspace digest.
    */
+  /**
+   * Retrieve experiences using two-stage recall (P4).
+   * Stage 1 (coarse): SQL filter by context_hash + tools_used intersection + minScore.
+   * Stage 2 (fine): Re-rank by composite score = outcome_score * 0.4 + tools_similarity * 0.3 + recency * 0.3.
+   * Deduplicates by context_hash, keeping only the newest for each (P0).
+   * Difficulty-aware: high difficulty experiences prioritized (P0).
+   */
   query(query: ExperienceQuery): ExperienceRecord[] {
     const limit = query.limit ?? 10
     const minScore = query.minScore ?? 0.0
 
-    // Start with all records above min score, then rank by similarity
-    let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore`
+    // Dynamic candidate set sizing (P4)
+    const totalCount = this.count()
+    let coarseLimit: number
+    if (totalCount < 50) {
+      coarseLimit = Math.max(limit * 5, 50)
+    } else if (totalCount < 200) {
+      coarseLimit = 20
+    } else {
+      coarseLimit = 50
+    }
+
+    // Stage 1: Coarse filter via SQL
+    let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
     const params: Record<string, unknown> = { minScore }
 
     if (query.taskPattern) {
@@ -200,25 +265,79 @@ export class ExperienceStore {
     }
 
     sql += ` ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit`
-    params.fetchLimit = limit * 3 // fetch more, then re-rank by similarity
+    params.fetchLimit = coarseLimit
 
     const rows = this.db.prepare(sql).all(params) as RawExperienceRow[]
     const records = rows.map((r) => this.rowToRecord(r))
 
-    // Re-rank by similarity score if we have context to match
+    // P0: Deduplicate by context_hash — keep only the newest for each
+    const deduped = this.deduplicateByContextHash(records)
+
+    // Stage 2: Fine re-ranking if we have context to match
+    let ranked: ExperienceRecord[]
     if (query.toolsUsed || query.workspaceDigest) {
-      const ranked = records
+      ranked = deduped
         .map((rec) => ({
           rec,
-          sim: this.similarityScore(rec, query),
+          rank: this.compositeRank(rec, query),
         }))
-        .sort((a, b) => b.sim - a.sim)
+        .sort((a, b) => b.rank - a.rank)
         .slice(0, limit)
         .map((item) => item.rec)
-      return ranked
+    } else {
+      // Without context, sort by difficulty priority then score (P0)
+      ranked = deduped
+        .sort((a, b) => {
+          const diffPriority = this.difficultyPriority(b.difficulty) - this.difficultyPriority(a.difficulty)
+          if (diffPriority !== 0) return diffPriority
+          return b.outcomeScore - a.outcomeScore
+        })
+        .slice(0, limit)
     }
 
-    return records.slice(0, limit)
+    return ranked
+  }
+
+  /**
+   * P0: Deduplicate records by context_hash.
+   * For records sharing the same context_hash, keep only the newest one.
+   */
+  private deduplicateByContextHash(records: ExperienceRecord[]): ExperienceRecord[] {
+    const seen = new Map<string, ExperienceRecord>()
+    for (const rec of records) {
+      const existing = seen.get(rec.contextHash)
+      if (!existing || rec.createdAt > existing.createdAt) {
+        seen.set(rec.contextHash, rec)
+      }
+    }
+    return [...seen.values()]
+  }
+
+  /**
+   * P0: Difficulty priority for injection ordering.
+   * high = 3, medium = 2, low = 1.
+   * High difficulty experiences are prioritized; low only fills when not enough.
+   */
+  private difficultyPriority(difficulty: string): number {
+    switch (difficulty) {
+      case 'high': return 3
+      case 'medium': return 2
+      case 'low': return 1
+      default: return 2
+    }
+  }
+
+  /**
+   * P4: Composite rank for fine re-ranking.
+   * outcome_score * 0.4 + tools_similarity * 0.3 + recency * 0.3
+   */
+  private compositeRank(rec: ExperienceRecord, query: ExperienceQuery): number {
+    const scoreComponent = rec.outcomeScore * 0.4
+    const simComponent = this.similarityScore(rec, query) * 0.3
+    // Recency: more recent = higher (normalize to 0-1 using exponential decay over 30 days)
+    const ageMs = Date.now() - rec.createdAt
+    const recencyComponent = Math.exp(-ageMs / (30 * 24 * 60 * 60 * 1000)) * 0.3
+    return scoreComponent + simComponent + recencyComponent
   }
 
   /**
@@ -251,6 +370,10 @@ export class ExperienceStore {
     positiveCount: number
     negativeCount: number
     withLessons: number
+    youngGenCount: number
+    oldGenCount: number
+    highDifficultyCount: number
+    mergedCount: number
   } {
     const row = this.db.prepare(`
       SELECT
@@ -258,7 +381,11 @@ export class ExperienceStore {
         COALESCE(AVG(outcome_score), 0) as avgScore,
         SUM(CASE WHEN user_feedback = 'positive' THEN 1 ELSE 0 END) as positiveCount,
         SUM(CASE WHEN user_feedback = 'negative' THEN 1 ELSE 0 END) as negativeCount,
-        SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons
+        SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons,
+        SUM(CASE WHEN generation = 0 THEN 1 ELSE 0 END) as youngGenCount,
+        SUM(CASE WHEN generation = 1 THEN 1 ELSE 0 END) as oldGenCount,
+        SUM(CASE WHEN difficulty = 'high' THEN 1 ELSE 0 END) as highDifficultyCount,
+        SUM(CASE WHEN merged = 1 THEN 1 ELSE 0 END) as mergedCount
       FROM experiences
     `).get() as {
       total: number
@@ -266,6 +393,10 @@ export class ExperienceStore {
       positiveCount: number
       negativeCount: number
       withLessons: number
+      youngGenCount: number
+      oldGenCount: number
+      highDifficultyCount: number
+      mergedCount: number
     }
 
     return {
@@ -274,6 +405,10 @@ export class ExperienceStore {
       positiveCount: row.positiveCount ?? 0,
       negativeCount: row.negativeCount ?? 0,
       withLessons: row.withLessons ?? 0,
+      youngGenCount: row.youngGenCount ?? 0,
+      oldGenCount: row.oldGenCount ?? 0,
+      highDifficultyCount: row.highDifficultyCount ?? 0,
+      mergedCount: row.mergedCount ?? 0,
     }
   }
 
@@ -287,39 +422,123 @@ export class ExperienceStore {
    * Experiences with outcome_score < EVICTION_SCORE_THRESHOLD and reuse_count == 0
    * are evicted first.
    */
+  /**
+   * P3: Generational GC — young gen + old gen dual-region management.
+   *
+   * Young Gen (generation=0): max YOUNG_GEN_MAX records.
+   *   - Minor GC when over capacity: evict low quality (low score, no lesson, low difficulty)
+   *   - Survivors (reused or score>=0.8 or has lesson) promoted to old gen
+   *
+   * Old Gen (generation=1): max OLD_GEN_MAX records.
+   *   - Major GC when over capacity: evict by quality priority
+   *     Priority: difficulty=low > no lesson > score<0.5 > merged=true
+   *     Never evict: difficulty=high with lesson
+   */
   private enforceRetention(): void {
-    const count = this.count()
-    if (count <= MAX_RECORDS) return
+    // --- Minor GC: young generation ---
+    const youngCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM experiences WHERE generation = 0',
+    ).get() as { c: number }).c
 
-    const toEvict = count - MAX_RECORDS
+    if (youngCount > YOUNG_GEN_MAX) {
+      // Promote survivors first
+      this.promoteYoungGen()
 
-    // First pass: evict low-score, never-reused records
-    const lowScoreStmt = this.db.prepare(`
-      DELETE FROM experiences
-      WHERE id IN (
-        SELECT id FROM experiences
-        WHERE outcome_score < ${EVICTION_SCORE_THRESHOLD}
-          AND reuse_count = 0
-        ORDER BY outcome_score ASC, created_at ASC
-        LIMIT @toEvict
-      )
-    `)
-    lowScoreStmt.run({ toEvict })
-
-    // Second pass: if still over limit, evict by combined score (low score + old)
-    const remaining = this.count()
-    if (remaining > MAX_RECORDS) {
-      const extra = remaining - MAX_RECORDS
-      const stmt = this.db.prepare(`
+      // Then evict low quality from young gen
+      const toEvict = youngCount - YOUNG_GEN_MAX
+      this.db.prepare(`
         DELETE FROM experiences
         WHERE id IN (
           SELECT id FROM experiences
-          ORDER BY (outcome_score * 0.5 + (CAST(strftime('%s', 'now') AS REAL) - created_at) * 0.0000001) DESC
-          LIMIT @extra
+          WHERE generation = 0
+            AND merged = 0
+          ORDER BY
+            CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
+            CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
+            outcome_score ASC,
+            created_at ASC
+          LIMIT @toEvict
         )
-      `)
-      stmt.run({ extra })
+      `).run({ toEvict })
     }
+
+    // --- Major GC: old generation ---
+    const oldCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
+    ).get() as { c: number }).c
+
+    if (oldCount > OLD_GEN_MAX) {
+      const toEvict = oldCount - OLD_GEN_MAX
+      // Evict by quality priority, but never evict high difficulty with lesson
+      this.db.prepare(`
+        DELETE FROM experiences
+        WHERE id IN (
+          SELECT id FROM experiences
+          WHERE generation = 1
+            AND NOT (difficulty = 'high' AND lesson IS NOT NULL)
+          ORDER BY
+            CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
+            CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
+            CASE WHEN outcome_score < 0.5 THEN 0 ELSE 1 END,
+            CASE WHEN merged = 1 THEN 0 ELSE 1 END,
+            outcome_score ASC,
+            created_at ASC
+          LIMIT @toEvict
+        )
+      `).run({ toEvict })
+
+      // If still over (all remaining are high-difficulty with lessons), evict lowest score
+      const remainingOld = (this.db.prepare(
+        'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
+      ).get() as { c: number }).c
+      if (remainingOld > OLD_GEN_MAX) {
+        this.db.prepare(`
+          DELETE FROM experiences
+          WHERE id IN (
+            SELECT id FROM experiences
+            WHERE generation = 1
+            ORDER BY outcome_score ASC
+            LIMIT @extra
+          )
+        `).run({ extra: remainingOld - OLD_GEN_MAX })
+      }
+    }
+  }
+
+  /**
+   * P3: Promote qualified young gen experiences to old gen.
+   * Conditions: reuse_count >= 1, OR score >= 0.8 with lesson, OR merged product.
+   */
+  private promoteYoungGen(): void {
+    this.db.prepare(`
+      UPDATE experiences
+      SET generation = 1
+      WHERE generation = 0
+        AND (reuse_count >= 1 OR (outcome_score >= 0.8 AND lesson IS NOT NULL) OR merged = 1)
+    `).run()
+  }
+
+  /**
+   * P3: Promote a specific experience to old gen (e.g. after LLM merge).
+   */
+  promoteToOldGen(id: string): void {
+    this.db.prepare('UPDATE experiences SET generation = 1 WHERE id = ?').run(id)
+  }
+
+  /**
+   * P3: Mark a record as merged.
+   */
+  markMerged(id: string): void {
+    this.db.prepare('UPDATE experiences SET merged = 1 WHERE id = ?').run(id)
+  }
+
+  /**
+   * Delete a record by id.
+   * Used by memory benchmark tests (selective forgetting).
+   */
+  deleteById(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM experiences WHERE id = ?').run(id)
+    return result.changes > 0
   }
 
   // -------------------------------------------------------------------------
@@ -406,10 +625,258 @@ export class ExperienceStore {
       outcomeScore: row.outcome_score,
       userFeedback: row.user_feedback,
       lesson: row.lesson,
+      difficulty: (row.difficulty as 'low' | 'medium' | 'high') ?? 'medium',
+      generation: row.generation ?? 0,
+      lastInjectedAt: row.last_injected_at ?? null,
+      merged: Boolean(row.merged),
       tags: row.tags ? JSON.parse(row.tags) : null,
       confidence: row.confidence,
       reuseCount: row.reuse_count,
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // P2: Lesson merging
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get unmerged lessons grouped by difficulty + tool similarity.
+   * Returns groups suitable for LLM-based merging.
+   */
+  getUnmergedLessonGroups(threshold: number = LESSON_MERGE_THRESHOLD): {
+    difficulty: string
+    toolsKey: string
+    records: ExperienceRecord[]
+  }[] {
+    const unmergedCount = (this.db.prepare(
+      `SELECT COUNT(*) as c FROM experiences WHERE lesson IS NOT NULL AND merged = 0`,
+    ).get() as { c: number }).c
+
+    if (unmergedCount < threshold) return []
+
+    const rows = this.db.prepare(`
+      SELECT * FROM experiences
+      WHERE lesson IS NOT NULL AND merged = 0
+      ORDER BY difficulty DESC, created_at DESC
+    `).all() as RawExperienceRow[]
+
+    const records = rows.map((r) => this.rowToRecord(r))
+
+    // Group by difficulty + sorted tools key
+    const groups = new Map<string, ExperienceRecord[]>()
+    for (const rec of records) {
+      const toolsKey = rec.toolsUsed ? [...rec.toolsUsed].sort().join(',') : 'none'
+      const key = `${rec.difficulty}|${toolsKey}`
+      const group = groups.get(key) ?? []
+      group.push(rec)
+      groups.set(key, group)
+    }
+
+    return [...groups.entries()]
+      .filter(([, recs]) => recs.length >= 2)
+      .map(([key, recs]) => {
+        const [difficulty, toolsKey] = key.split('|')
+        return { difficulty, toolsKey, records: recs }
+      })
+  }
+
+  /**
+   * P2: Merge multiple lessons into a single consolidated lesson.
+   * Marks old records as merged, creates a new record in old gen.
+   */
+  mergeLessons(
+    sourceIds: string[],
+    mergedLesson: {
+      whatWorked: string
+      whatFailed: string
+      whatToTryDifferently: string
+      reusableLesson: string
+    },
+    difficulty: 'low' | 'medium' | 'high',
+    toolsUsed: string[],
+  ): string {
+    const id = ulid()
+    const contextHash = this.computeContextHash(null, toolsUsed, null)
+
+    this.db.prepare(`
+      INSERT INTO experiences (
+        id, session_id, turn_id, created_at,
+        context_hash, task_pattern, tools_used, workspace_digest,
+        actions, outcome_score, user_feedback, lesson,
+        difficulty, generation, last_injected_at, merged,
+        tags, confidence, reuse_count
+      ) VALUES (
+        @id, @sessionId, @turnId, @createdAt,
+        @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
+        @actions, @outcomeScore, @userFeedback, @lesson,
+        @difficulty, @generation, @lastInjectedAt, @merged,
+        @tags, @confidence, @reuseCount
+      )
+    `).run({
+      id,
+      sessionId: 'merge',
+      turnId: `merge-${Date.now()}`,
+      createdAt: Date.now(),
+      contextHash,
+      taskPattern: null,
+      toolsUsed: JSON.stringify(toolsUsed),
+      workspaceDigest: null,
+      actions: JSON.stringify({ merged_from: sourceIds }),
+      outcomeScore: 0.85,
+      userFeedback: 'none',
+      lesson: JSON.stringify(mergedLesson),
+      difficulty,
+      generation: 1, // Merged products go directly to old gen
+      lastInjectedAt: null,
+      merged: 0,
+      tags: JSON.stringify(['merged']),
+      confidence: 1.0,
+      reuseCount: 0,
+    })
+
+    // Mark source records as merged
+    for (const sourceId of sourceIds) {
+      this.markMerged(sourceId)
+    }
+
+    return id
+  }
+
+  // -------------------------------------------------------------------------
+  // P5: Import / Export
+  // -------------------------------------------------------------------------
+
+  /**
+   * P5: Export all experiences as an array of plain objects.
+   * Used for backup, machine migration, and team sharing.
+   */
+  exportAll(): ExportedExperience[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM experiences ORDER BY created_at ASC
+    `).all() as RawExperienceRow[]
+
+    return rows.map((r) => this.rowToRecord(r)).map((rec) => ({
+      id: rec.id,
+      outcomeScore: rec.outcomeScore,
+      toolsUsed: rec.toolsUsed,
+      lesson: rec.lesson,
+      difficulty: rec.difficulty,
+      taskPattern: rec.taskPattern,
+      generation: rec.generation,
+      merged: rec.merged,
+      confidence: rec.confidence,
+      reuseCount: rec.reuseCount,
+      createdAt: rec.createdAt,
+      actions: rec.actions,
+    }))
+  }
+
+  /**
+   * P5: Export filtered experiences by task pattern.
+   */
+  exportByTaskPattern(taskPattern: string): ExportedExperience[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM experiences WHERE task_pattern = ? ORDER BY created_at ASC
+    `).all(taskPattern) as RawExperienceRow[]
+
+    return rows.map((r) => this.rowToRecord(r)).map((rec) => ({
+      id: rec.id,
+      outcomeScore: rec.outcomeScore,
+      toolsUsed: rec.toolsUsed,
+      lesson: rec.lesson,
+      difficulty: rec.difficulty,
+      taskPattern: rec.taskPattern,
+      generation: rec.generation,
+      merged: rec.merged,
+      confidence: rec.confidence,
+      reuseCount: rec.reuseCount,
+      createdAt: rec.createdAt,
+      actions: rec.actions,
+    }))
+  }
+
+  /**
+   * P5: Import experiences from a JSON array.
+   * - Deduplicates by id (skip existing)
+   * - Imported experiences go to young gen (generation=0)
+   * - Returns { imported, skipped, invalid }
+   */
+  importExperiences(data: unknown[]): {
+    imported: number
+    skipped: number
+    invalid: number
+  } {
+    let imported = 0
+    let skipped = 0
+    let invalid = 0
+
+    const existingIds = new Set(
+      (this.db.prepare('SELECT id FROM experiences').all() as { id: string }[]).map((r) => r.id),
+    )
+
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO experiences (
+        id, session_id, turn_id, created_at,
+        context_hash, task_pattern, tools_used, workspace_digest,
+        actions, outcome_score, user_feedback, lesson,
+        difficulty, generation, last_injected_at, merged,
+        tags, confidence, reuse_count
+      ) VALUES (
+        @id, @sessionId, @turnId, @createdAt,
+        @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
+        @actions, @outcomeScore, @userFeedback, @lesson,
+        @difficulty, @generation, @lastInjectedAt, @merged,
+        @tags, @confidence, @reuseCount
+      )
+    `)
+
+    for (const item of data) {
+      if (!isValidImportedExperience(item)) {
+        invalid++
+        continue
+      }
+
+      if (existingIds.has(item.id)) {
+        skipped++
+        continue
+      }
+
+      const contextHash = this.computeContextHash(
+        item.taskPattern,
+        item.toolsUsed,
+        null,
+      )
+
+      insertStmt.run({
+        id: item.id,
+        sessionId: 'import',
+        turnId: `import-${item.createdAt}`,
+        createdAt: item.createdAt,
+        contextHash,
+        taskPattern: item.taskPattern,
+        toolsUsed: item.toolsUsed ? JSON.stringify(item.toolsUsed) : null,
+        workspaceDigest: null,
+        actions: item.actions,
+        outcomeScore: item.outcomeScore,
+        userFeedback: 'none',
+        lesson: item.lesson,
+        difficulty: item.difficulty,
+        generation: 0, // Imported experiences go to young gen
+        lastInjectedAt: null,
+        merged: item.merged ? 1 : 0,
+        tags: null,
+        confidence: item.confidence,
+        reuseCount: item.reuseCount,
+      })
+
+      existingIds.add(item.id)
+      imported++
+    }
+
+    // Enforce retention after import
+    this.enforceRetention()
+
+    return { imported, skipped, invalid }
   }
 
   // -------------------------------------------------------------------------
@@ -441,6 +908,10 @@ interface RawExperienceRow {
   outcome_score: number
   user_feedback: string
   lesson: string | null
+  difficulty: string
+  generation: number
+  last_injected_at: number | null
+  merged: number
   tags: string | null
   confidence: number
   reuse_count: number

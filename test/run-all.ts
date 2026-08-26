@@ -13,6 +13,7 @@ const testFiles = [
   'outcome-evaluator.test.ts',
   'behavior-adapter.test.ts',
   'meta-cognition.test.ts',
+  'memory-benchmark.test.ts',
 ]
 
 let totalPassed = 0

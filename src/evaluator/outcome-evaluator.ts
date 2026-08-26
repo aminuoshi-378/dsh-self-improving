@@ -16,6 +16,8 @@ import {
   GUARD_PENALTY_PER_TRIGGER,
   MAX_OUTCOME_SCORE,
   MIN_OUTCOME_SCORE,
+  computeStepEfficiency,
+  computeDifficulty,
 } from '../types/index.js'
 
 export class OutcomeEvaluator {
@@ -39,9 +41,18 @@ export class OutcomeEvaluator {
     const toolSuccessRate =
       toolCallCount > 0 ? successCount / toolCallCount : 0.0
 
+    // P0: Step efficiency — use stepCount if available, else fall back to toolCallCount
+    const stepCount = data.stepCount ?? toolCallCount
+    const stepEfficiency = computeStepEfficiency(stepCount)
+
+    // P0: Determine difficulty
+    const hasFailures = data.toolResults.some((r) => !r.success)
+    const difficulty = computeDifficulty(stepCount, hasFailures)
+
     const outcomeScore = this.computeScore({
       goalProgress: data.goalProgress,
       toolSuccessRate,
+      stepEfficiency,
       guardTriggerCount: data.guardTriggers.length,
       userFeedback: data.userFeedback,
     })
@@ -54,6 +65,8 @@ export class OutcomeEvaluator {
       toolSuccessRate,
       guardTriggerCount: data.guardTriggers.length,
       userFeedback: data.userFeedback,
+      stepEfficiency,
+      difficulty,
       outcomeScore,
       timestamp: data.timestamp,
     }
@@ -92,14 +105,16 @@ export class OutcomeEvaluator {
    * Compute a composite outcome score from individual signals.
    *
    * Weights (from SCORE_WEIGHTS):
-   *   goalProgress:  0.40 — most important: did the turn actually advance?
-   *   toolSuccess:   0.25 — tool call success rate
-   *   guardPenalty:  0.15 — subtracted for each guard trigger
-   *   userFeedback:  0.20 — explicit user satisfaction signal
+   *   goalProgress:   0.30 — most important: did the turn actually advance?
+   *   toolSuccess:    0.20 — tool call success rate
+   *   stepEfficiency:  0.25 — fewer steps = more efficient
+   *   guardPenalty:   0.15 — subtracted for each guard trigger
+   *   userFeedback:   0.10 — user satisfaction signal (lower weight: P1 implicit negative)
    */
   private computeScore(input: {
     goalProgress: TurnOutcome['goalProgress']
     toolSuccessRate: number
+    stepEfficiency: number
     guardTriggerCount: number
     userFeedback: TurnOutcome['userFeedback']
   }): number {
@@ -109,6 +124,9 @@ export class OutcomeEvaluator {
 
     // Tool success component
     const toolComponent = input.toolSuccessRate * SCORE_WEIGHTS.toolSuccess
+
+    // P0: Step efficiency component
+    const efficiencyComponent = input.stepEfficiency * SCORE_WEIGHTS.stepEfficiency
 
     // Guard penalty (subtracted from the guard weight)
     const guardPenalty = Math.min(
@@ -121,7 +139,7 @@ export class OutcomeEvaluator {
     const feedbackScore = this.feedbackScore(input.userFeedback)
     const feedbackComponent = feedbackScore * SCORE_WEIGHTS.userFeedback
 
-    const total = goalComponent + toolComponent + guardComponent + feedbackComponent
+    const total = goalComponent + toolComponent + efficiencyComponent + guardComponent + feedbackComponent
 
     return Math.max(
       MIN_OUTCOME_SCORE,

@@ -18,6 +18,7 @@ import type {
   ExperienceSummary,
   LearnedPreference,
 } from '../types/index.js'
+import { extractLessonText } from '../types/index.js'
 
 export class BehaviorAdapter {
   private store: ExperienceStore
@@ -39,35 +40,75 @@ export class BehaviorAdapter {
    * Called from the agent/pre-step waterfall.
    * Returns advisory context — the model can heed or ignore it.
    */
+  /**
+   * Retrieve and format relevant historical experiences for injection
+   * at the start of a new step.
+   *
+   * P3: Dynamic injection control — allocates slots by difficulty:
+   *   high: up to 5, medium: up to 2, low: only fills if not enough
+   *   Token budget: total injection ≤ ~2000 tokens (~800 chars)
+   *
+   * Called from the agent/pre-step waterfall.
+   * Returns advisory context — the model can heed or ignore it.
+   */
   getExperienceSummary(query: ExperienceQuery): ExperienceSummary | null {
-    const records = this.store.query(query)
+    // P3: Dynamic limit based on difficulty allocation
+    const dynamicLimit = this.computeDynamicLimit()
+    const records = this.store.query({ ...query, limit: dynamicLimit })
 
     if (records.length === 0) {
       return null
     }
 
+    // P3: Allocate by difficulty: high first, then medium, low as filler
+    const { high, medium, low } = this.partitionByDifficulty(records)
+    const selected = [
+      ...high.slice(0, 5),
+      ...medium.slice(0, 2),
+      ...low.slice(0, Math.max(0, 7 - high.length - medium.length)),
+    ]
+
+    // P3: Token budget control (~2000 tokens ≈ 8000 chars, using 4 chars/token approx)
+    const MAX_CHARS = 8000
+    let charBudget = MAX_CHARS
+    const budgeted: ExperienceRecord[] = []
+    for (const rec of selected) {
+      const lessonText = extractLessonText(rec.lesson) ?? ''
+      if (lessonText.length > 0 && lessonText.length <= charBudget) {
+        budgeted.push(rec)
+        charBudget -= lessonText.length
+      } else if (lessonText.length === 0) {
+        budgeted.push(rec)
+      }
+    }
+
+    if (budgeted.length === 0) {
+      return null
+    }
+
     // Extract lessons from highest and lowest scored matching experiences
-    const sortedByScore = [...records].sort(
+    const sortedByScore = [...budgeted].sort(
       (a, b) => b.outcomeScore - a.outcomeScore,
     )
 
     const highest = sortedByScore[0]
     const lowest = sortedByScore[sortedByScore.length - 1]
 
+    // P4: Extract reusable_lesson from structured JSON lesson
     const whatWorked =
       highest && highest.outcomeScore >= 0.6
-        ? highest.lesson ?? this.deriveLesson(highest, 'success')
+        ? extractLessonText(highest.lesson) ?? this.deriveLesson(highest, 'success')
         : null
 
     const whatFailed =
       lowest && lowest.outcomeScore <= 0.4
-        ? lowest.lesson ?? this.deriveLesson(lowest, 'failure')
+        ? extractLessonText(lowest.lesson) ?? this.deriveLesson(lowest, 'failure')
         : null
 
-    const suggestedApproach = this.aggregateRecommendations(records)
+    const suggestedApproach = this.aggregateRecommendations(budgeted)
 
     // Track reuse for confidence decay
-    for (const rec of records) {
+    for (const rec of budgeted) {
       this.store.incrementReuse(rec.id)
     }
 
@@ -77,8 +118,40 @@ export class BehaviorAdapter {
       whatWorked,
       whatFailed,
       suggestedApproach,
-      matchingRecords: records.length,
+      matchingRecords: budgeted.length,
     }
+  }
+
+  /**
+   * P3: Compute dynamic limit based on store size.
+   */
+  private computeDynamicLimit(): number {
+    const stats = this.store.stats()
+    if (stats.total < 50) return 10
+    if (stats.total < 200) return 10
+    return 10
+  }
+
+  /**
+   * P3: Partition records by difficulty for priority injection.
+   */
+  private partitionByDifficulty(records: ExperienceRecord[]): {
+    high: ExperienceRecord[]
+    medium: ExperienceRecord[]
+    low: ExperienceRecord[]
+  } {
+    const high: ExperienceRecord[] = []
+    const medium: ExperienceRecord[] = []
+    const low: ExperienceRecord[] = []
+    for (const rec of records) {
+      switch (rec.difficulty) {
+        case 'high': high.push(rec); break
+        case 'medium': medium.push(rec); break
+        case 'low': low.push(rec); break
+        default: medium.push(rec); break
+      }
+    }
+    return { high, medium, low }
   }
 
   /**

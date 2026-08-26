@@ -16,11 +16,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { ulid } from 'ulid'
+import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern } from './types/index.js'
 
 export const name = 'self-improving'
 
@@ -41,7 +41,7 @@ export interface Config {
   minInjectionScore: number
 }
 
-function rulesSchema() {
+export function rulesSchema() {
   return {
     title: 'dsh-self-improving',
     type: 'object',
@@ -71,6 +71,10 @@ interface ExperienceRecord {
   outcomeScore: number
   userFeedback: string
   lesson: string | null
+  difficulty: 'low' | 'medium' | 'high'
+  generation: number
+  lastInjectedAt: number | null
+  merged: boolean
   confidence: number
   reuseCount: number
 }
@@ -108,13 +112,37 @@ class ExperienceStore {
         outcome_score REAL,
         user_feedback TEXT,
         lesson TEXT,
+        difficulty TEXT DEFAULT 'medium',
+        generation INTEGER DEFAULT 0,
+        last_injected_at INTEGER,
+        merged INTEGER DEFAULT 0,
         confidence REAL DEFAULT 1.0,
         reuse_count INTEGER DEFAULT 0
       );
+    `)
+
+    // Migration: add columns that may not exist in older databases
+    this.ensureColumn('difficulty', "TEXT DEFAULT 'medium'")
+    this.ensureColumn('generation', 'INTEGER DEFAULT 0')
+    this.ensureColumn('last_injected_at', 'INTEGER')
+    this.ensureColumn('merged', 'INTEGER DEFAULT 0')
+
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_exp_context ON experiences(context_hash);
       CREATE INDEX IF NOT EXISTS idx_exp_task ON experiences(task_pattern);
       CREATE INDEX IF NOT EXISTS idx_exp_score ON experiences(outcome_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_exp_difficulty ON experiences(difficulty);
+      CREATE INDEX IF NOT EXISTS idx_exp_generation ON experiences(generation);
+      CREATE INDEX IF NOT EXISTS idx_exp_merged ON experiences(merged);
     `)
+  }
+
+  /** Add a column to the experiences table if it doesn't already exist (migration support). */
+  private ensureColumn(columnName: string, definition: string): void {
+    const cols = this.db.prepare('PRAGMA table_info(experiences)').all() as { name: string }[]
+    if (!cols.some((c) => c.name === columnName)) {
+      this.db.exec(`ALTER TABLE experiences ADD COLUMN ${columnName} ${definition}`)
+    }
   }
 
   store(
@@ -125,20 +153,25 @@ class ExperienceStore {
     toolsUsed: string[],
     actions: string,
     workspaceDigest: string | null,
+    difficulty: 'low' | 'medium' | 'high' = 'medium',
+    taskPattern: string | null = null,
   ): string {
     const id = ulid()
-    const contextHash = [toolsUsed.slice().sort().join(','), workspaceDigest ?? ''].join('|')
+    const contextHash = [taskPattern ?? '', toolsUsed.slice().sort().join(','), workspaceDigest ?? ''].join('|')
 
     this.db.prepare(`
       INSERT INTO experiences (id, session_id, turn_id, created_at, context_hash,
         task_pattern, tools_used, workspace_digest, actions, outcome_score,
-        user_feedback, lesson, confidence, reuse_count)
+        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
+        confidence, reuse_count)
       VALUES (@id, @sessionId, @turnId, @createdAt, @contextHash,
-        NULL, @toolsUsed, @ws, @actions, @score, @feedback, NULL, 1.0, 0)
+        @taskPattern, @toolsUsed, @ws, @actions, @score, @feedback, NULL,
+        @difficulty, 0, NULL, 0, 1.0, 0)
     `).run({
       id, sessionId, turnId, createdAt: Date.now(),
-      contextHash, toolsUsed: JSON.stringify(toolsUsed),
+      contextHash, taskPattern, toolsUsed: JSON.stringify(toolsUsed),
       ws: workspaceDigest, actions, score: outcomeScore, feedback: userFeedback,
+      difficulty,
     })
 
     // Enforce retention limit of 1000
@@ -155,30 +188,83 @@ class ExperienceStore {
   }
 
   query(toolsUsed: string[], workspaceDigest: string | null, limit: number = 5, minScore: number = 0.0): ExperienceRecord[] {
+    const totalCount = this.count()
+    // P4: Dynamic candidate set sizing
+    const coarseLimit = totalCount < 50 ? Math.max(limit * 5, 50) : totalCount < 200 ? 20 : 50
+
+    // Stage 1: Coarse filter (P4) — exclude merged records
     const rows = this.db.prepare(`
-      SELECT * FROM experiences WHERE outcome_score >= ? ORDER BY outcome_score DESC, created_at DESC LIMIT ?
-    `).all(minScore, limit * 3) as any[]
+      SELECT * FROM experiences WHERE outcome_score >= ? AND merged = 0
+      ORDER BY outcome_score DESC, created_at DESC LIMIT ?
+    `).all(minScore, coarseLimit) as any[]
 
     const records = rows.map(r => this.rowToRecord(r))
-    if (toolsUsed.length === 0 && !workspaceDigest) return records.slice(0, limit)
 
-    // Re-rank by tool overlap similarity
-    return records
-      .map(rec => ({ rec, sim: this.similarity(rec, toolsUsed, workspaceDigest) }))
-      .sort((a, b) => b.sim - a.sim)
+    // P0: Deduplicate by context_hash — keep only the newest
+    const deduped = this.deduplicateByContextHash(records)
+
+    if (toolsUsed.length === 0 && !workspaceDigest) {
+      // P0: Sort by difficulty priority then score
+      return deduped
+        .sort((a, b) => {
+          const dp = this.difficultyPriority(b.difficulty) - this.difficultyPriority(a.difficulty)
+          return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
+        })
+        .slice(0, limit)
+    }
+
+    // Stage 2: Fine re-rank by composite score (P4)
+    // outcome_score * 0.4 + tools_similarity * 0.3 + recency * 0.3
+    return deduped
+      .map(rec => ({
+        rec,
+        rank: rec.outcomeScore * 0.4 + this.similarity(rec, toolsUsed, workspaceDigest) * 0.3
+          + Math.exp(-(Date.now() - rec.createdAt) / (30 * 24 * 60 * 60 * 1000)) * 0.3,
+      }))
+      .sort((a, b) => b.rank - a.rank)
       .slice(0, limit)
       .map(item => item.rec)
   }
 
-  updateLesson(id: string, lesson: string): void {
-    this.db.prepare('UPDATE experiences SET lesson = ? WHERE id = ?').run(lesson, id)
+  /** P0: Deduplicate by context_hash, keeping the newest for each */
+  private deduplicateByContextHash(records: ExperienceRecord[]): ExperienceRecord[] {
+    const seen = new Map<string, ExperienceRecord>()
+    for (const rec of records) {
+      const existing = seen.get(rec.contextHash)
+      if (!existing || rec.createdAt > existing.createdAt) {
+        seen.set(rec.contextHash, rec)
+      }
+    }
+    return [...seen.values()]
+  }
+
+  /** P0: Difficulty priority for injection ordering */
+  difficultyPriority(difficulty: string): number {
+    switch (difficulty) {
+      case 'high': return 3
+      case 'medium': return 2
+      case 'low': return 1
+      default: return 2
+    }
+  }
+
+  /** P4: Update lesson with structured Reflection (stored as JSON) */
+  updateLesson(id: string, reflection: {
+    whatWorked: string
+    whatFailed: string
+    whatToTryDifferently: string
+    reusableLesson: string
+  }): void {
+    this.db.prepare('UPDATE experiences SET lesson = ? WHERE id = ?')
+      .run(JSON.stringify(reflection), id)
   }
 
   incrementReuse(id: string): void {
     this.db.prepare(`
       UPDATE experiences SET reuse_count = reuse_count + 1,
-        confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1) WHERE id = ?
-    `).run(id)
+        confidence = MAX(0.1, 1.0 - (reuse_count + 1) * 0.1),
+        last_injected_at = ? WHERE id = ?
+    `).run(Date.now(), id)
   }
 
   boostConfidence(id: string): void {
@@ -189,14 +275,25 @@ class ExperienceStore {
     return (this.db.prepare('SELECT COUNT(*) as c FROM experiences').get() as any).c
   }
 
-  stats(): { total: number; avgScore: number; positive: number; withLessons: number } {
+  stats(): {
+    total: number; avgScore: number; positive: number; withLessons: number
+    youngGenCount: number; oldGenCount: number; highDifficultyCount: number; mergedCount: number
+  } {
     const r = this.db.prepare(`
       SELECT COUNT(*) as total, COALESCE(AVG(outcome_score), 0) as avgScore,
         SUM(CASE WHEN user_feedback = 'positive' THEN 1 ELSE 0 END) as positive,
-        SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons
+        SUM(CASE WHEN lesson IS NOT NULL THEN 1 ELSE 0 END) as withLessons,
+        SUM(CASE WHEN generation = 0 THEN 1 ELSE 0 END) as youngGenCount,
+        SUM(CASE WHEN generation = 1 THEN 1 ELSE 0 END) as oldGenCount,
+        SUM(CASE WHEN difficulty = 'high' THEN 1 ELSE 0 END) as highDifficultyCount,
+        SUM(CASE WHEN merged = 1 THEN 1 ELSE 0 END) as mergedCount
       FROM experiences
     `).get() as any
-    return { total: r.total, avgScore: r.avgScore, positive: r.positive ?? 0, withLessons: r.withLessons ?? 0 }
+    return {
+      total: r.total, avgScore: r.avgScore, positive: r.positive ?? 0, withLessons: r.withLessons ?? 0,
+      youngGenCount: r.youngGenCount ?? 0, oldGenCount: r.oldGenCount ?? 0,
+      highDifficultyCount: r.highDifficultyCount ?? 0, mergedCount: r.mergedCount ?? 0,
+    }
   }
 
   private similarity(rec: ExperienceRecord, tools: string[], ws: string | null): number {
@@ -219,8 +316,174 @@ class ExperienceStore {
       toolsUsed: r.tools_used ? JSON.parse(r.tools_used) : null,
       workspaceDigest: r.workspace_digest, actions: r.actions,
       outcomeScore: r.outcome_score, userFeedback: r.user_feedback,
-      lesson: r.lesson, confidence: r.confidence, reuseCount: r.reuse_count,
+      lesson: r.lesson, difficulty: r.difficulty ?? 'medium',
+      generation: r.generation ?? 0, lastInjectedAt: r.last_injected_at ?? null,
+      merged: Boolean(r.merged),
+      confidence: r.confidence, reuseCount: r.reuse_count,
     }
+  }
+
+  /** P2: Get unmerged lesson groups for consolidation */
+  getUnmergedLessonGroups(threshold: number = 20): {
+    difficulty: string
+    toolsKey: string
+    records: ExperienceRecord[]
+  }[] {
+    const unmergedCount = (this.db.prepare(
+      `SELECT COUNT(*) as c FROM experiences WHERE lesson IS NOT NULL AND merged = 0`,
+    ).get() as any).c
+
+    if (unmergedCount < threshold) return []
+
+    const rows = this.db.prepare(`
+      SELECT * FROM experiences
+      WHERE lesson IS NOT NULL AND merged = 0
+      ORDER BY difficulty DESC, created_at DESC
+    `).all() as any[]
+
+    const records = rows.map(r => this.rowToRecord(r))
+
+    const groups = new Map<string, ExperienceRecord[]>()
+    for (const rec of records) {
+      const toolsKey = rec.toolsUsed ? [...rec.toolsUsed].sort().join(',') : 'none'
+      const key = `${rec.difficulty}|${toolsKey}`
+      const group = groups.get(key) ?? []
+      group.push(rec)
+      groups.set(key, group)
+    }
+
+    return [...groups.entries()]
+      .filter(([, recs]) => recs.length >= 2)
+      .map(([key, recs]) => {
+        const [difficulty, toolsKey] = key.split('|')
+        return { difficulty, toolsKey, records: recs }
+      })
+  }
+
+  /** P2: Merge lessons into a consolidated record */
+  mergeLessons(
+    sourceIds: string[],
+    mergedLesson: {
+      whatWorked: string
+      whatFailed: string
+      whatToTryDifferently: string
+      reusableLesson: string
+    },
+    difficulty: 'low' | 'medium' | 'high',
+    toolsUsed: string[],
+  ): string {
+    const id = ulid()
+    const contextHash = toolsUsed.slice().sort().join(',')
+
+    this.db.prepare(`
+      INSERT INTO experiences (id, session_id, turn_id, created_at, context_hash,
+        task_pattern, tools_used, workspace_digest, actions, outcome_score,
+        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
+        confidence, reuse_count)
+      VALUES (@id, @sessionId, @turnId, @createdAt, @contextHash,
+        NULL, @toolsUsed, NULL, @actions, 0.85, 'none',
+        @lesson, @difficulty, 1, NULL, 0, 1.0, 0)
+    `).run({
+      id, sessionId: 'merge', turnId: `merge-${Date.now()}`, createdAt: Date.now(),
+      contextHash, toolsUsed: JSON.stringify(toolsUsed),
+      actions: JSON.stringify({ merged_from: sourceIds }),
+      lesson: JSON.stringify(mergedLesson), difficulty,
+    })
+
+    for (const sourceId of sourceIds) {
+      this.db.prepare('UPDATE experiences SET merged = 1 WHERE id = ?').run(sourceId)
+    }
+
+    return id
+  }
+
+  /** P5: Export all experiences as JSON array */
+  exportAll(): any[] {
+    return this.db.prepare('SELECT * FROM experiences ORDER BY created_at ASC').all()
+      .map((r: any) => this.rowToRecord(r))
+      .map((rec: ExperienceRecord) => ({
+        id: rec.id,
+        outcomeScore: rec.outcomeScore,
+        toolsUsed: rec.toolsUsed,
+        lesson: rec.lesson,
+        difficulty: rec.difficulty,
+        taskPattern: rec.taskPattern,
+        generation: rec.generation,
+        merged: rec.merged,
+        confidence: rec.confidence,
+        reuseCount: rec.reuseCount,
+        createdAt: rec.createdAt,
+        actions: rec.actions,
+      }))
+  }
+
+  /** P5: Export filtered by task pattern */
+  exportByTaskPattern(taskPattern: string): any[] {
+    return this.db.prepare('SELECT * FROM experiences WHERE task_pattern = ? ORDER BY created_at ASC')
+      .all(taskPattern)
+      .map((r: any) => this.rowToRecord(r))
+      .map((rec: ExperienceRecord) => ({
+        id: rec.id,
+        outcomeScore: rec.outcomeScore,
+        toolsUsed: rec.toolsUsed,
+        lesson: rec.lesson,
+        difficulty: rec.difficulty,
+        taskPattern: rec.taskPattern,
+        generation: rec.generation,
+        merged: rec.merged,
+        confidence: rec.confidence,
+        reuseCount: rec.reuseCount,
+        createdAt: rec.createdAt,
+        actions: rec.actions,
+      }))
+  }
+
+  /** P5: Import experiences from JSON array */
+  importExperiences(data: any[]): { imported: number; skipped: number; invalid: number } {
+    let imported = 0, skipped = 0, invalid = 0
+    const existingIds = new Set(
+      (this.db.prepare('SELECT id FROM experiences').all() as any[]).map((r: any) => r.id),
+    )
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO experiences (
+        id, session_id, turn_id, created_at, context_hash,
+        task_pattern, tools_used, workspace_digest, actions, outcome_score,
+        user_feedback, lesson, difficulty, generation, last_injected_at, merged,
+        confidence, reuse_count)
+      VALUES (@id, 'import', @turnId, @createdAt, @contextHash,
+        @taskPattern, @toolsUsed, NULL, @actions, @outcomeScore,
+        'none', @lesson, @difficulty, 0, NULL, @merged,
+        @confidence, @reuseCount)
+    `)
+    for (const item of data) {
+      if (typeof item !== 'object' || item === null ||
+          typeof item.id !== 'string' || typeof item.outcomeScore !== 'number') {
+        invalid++; continue
+      }
+      if (existingIds.has(item.id)) { skipped++; continue }
+      const tools = item.toolsUsed
+      const contextHash = Array.isArray(tools)
+        ? [...tools].sort().join(',')
+        : ''
+      insertStmt.run({
+        id: item.id,
+        turnId: `import-${item.createdAt}`,
+        createdAt: item.createdAt || Date.now(),
+        contextHash,
+        taskPattern: item.taskPattern ?? null,
+        toolsUsed: Array.isArray(tools) ? JSON.stringify(tools) : null,
+        actions: item.actions ?? '{}',
+        outcomeScore: item.outcomeScore,
+        lesson: item.lesson ?? null,
+        difficulty: item.difficulty ?? 'medium',
+        merged: item.merged ? 1 : 0,
+        confidence: item.confidence ?? 1.0,
+        reuseCount: item.reuseCount ?? 0,
+      })
+      existingIds.add(item.id)
+      imported++
+    }
+    return { imported, skipped, invalid }
   }
 
   close(): void { this.db.close() }
@@ -242,6 +505,91 @@ function log(msg: string, data?: unknown): void {
   }
 }
 
+/**
+ * P2: Generate a structured reflection (Reflection JSON) from turn data.
+ * This is the rule-based fallback when no LLM is available.
+ * Produces actionable, context-specific lessons.
+ */
+function generateStructuredReflection(entry: {
+  actions: string
+  outcomeScore: number
+  userFeedback: string
+  toolsUsed: string[]
+  stepCount?: number
+  difficulty?: 'low' | 'medium' | 'high'
+}): {
+  whatWorked: string
+  whatFailed: string
+  whatToTryDifferently: string
+  reusableLesson: string
+} {
+  let parsedActions: any = {}
+  try { parsedActions = JSON.parse(entry.actions) } catch {}
+
+  const toolNames = parsedActions.tools?.map((t: any) => t.tool).filter(Boolean) ?? entry.toolsUsed
+  const guardCount = parsedActions.guards?.length ?? 0
+  const stepInfo = entry.stepCount ? ` in ${entry.stepCount} steps` : ''
+  const diffInfo = entry.difficulty ? ` (difficulty: ${entry.difficulty})` : ''
+
+  let whatWorked: string
+  let whatFailed: string
+  let whatToTryDifferently: string
+  let reusableLesson: string
+
+  if (entry.outcomeScore >= 0.8) {
+    whatWorked = `Tool sequence [${toolNames.join(' → ')}]${stepInfo}${diffInfo} achieved a strong outcome (score: ${entry.outcomeScore.toFixed(2)})`
+    whatFailed = 'No significant failures detected'
+    whatToTryDifferently = 'Continue using this approach for similar tasks'
+    reusableLesson = `For ${entry.difficulty ?? 'medium'} tasks, [${toolNames.join(' → ')}] is effective${stepInfo}`
+  } else if (entry.outcomeScore <= 0.3) {
+    whatWorked = 'No clearly successful elements identified'
+    const failedTools = parsedActions.tools?.filter((t: any) => !t.ok).map((t: any) => t.tool) ?? []
+    whatFailed = failedTools.length > 0
+      ? `Tools [${failedTools.join(', ')}] failed${stepInfo}${diffInfo} (score: ${entry.outcomeScore.toFixed(2)})`
+      : `Overall outcome was poor (score: ${entry.outcomeScore.toFixed(2)})${diffInfo}`
+    whatToTryDifferently = guardCount > 0
+      ? 'Avoid repeating the same tool calls — try a different approach'
+      : 'Consider breaking the task into smaller steps or using different tools'
+    reusableLesson = `When facing ${entry.difficulty ?? 'medium'} tasks similar to this, avoid [${failedTools.join(', ') || toolNames.join(', ')}] — try an alternative approach`
+  } else {
+    whatWorked = `Partial success with [${toolNames.join(' → ')}]${stepInfo} (score: ${entry.outcomeScore.toFixed(2)})`
+    whatFailed = guardCount > 0
+      ? `Guard triggers (${guardCount}) suggest inefficiency or looping`
+      : 'Mixed results — some tools succeeded, others did not'
+    whatToTryDifferently = 'Review tool selection and optimize the sequence'
+    reusableLesson = `For ${entry.difficulty ?? 'medium'} tasks, [${toolNames.join(' → ')}] gives mixed results${stepInfo} — consider alternatives for failing steps`
+  }
+
+  return { whatWorked, whatFailed, whatToTryDifferently, reusableLesson }
+}
+
+/**
+ * P2: Rule-based lesson merging (fallback when no LLM available).
+ * Consolidates related lessons into a single general lesson.
+ */
+function mergeLessonsRuleBased(records: ExperienceRecord[]): {
+  whatWorked: string
+  whatFailed: string
+  whatToTryDifferently: string
+  reusableLesson: string
+} {
+  const lessons = records.map(r => {
+    try {
+      const parsed = JSON.parse(r.lesson ?? '{}')
+      return parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson ?? ''
+    } catch {
+      return r.lesson ?? ''
+    }
+  }).filter(l => l.length > 0)
+
+  return {
+    whatWorked: `Consolidated from ${records.length} experiences`,
+    whatFailed: 'See individual records for specific failures',
+    whatToTryDifferently: 'Apply the consolidated lesson',
+    reusableLesson: lessons.join('; ') || 'No specific lesson extracted',
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const store = new ExperienceStore(config.dbPath)
 
@@ -249,7 +597,13 @@ export function apply(ctx: Context, config: Config): void {
 
   // Per-agent turn tracking: collect tool results during a turn
   // Key: agent.id only (accumulate all tools across steps within a turn)
-  const agentTools = new Map<string, { tools: { name: string; success: boolean }[]; sessionId: string }>()
+  // Also tracks step count for efficiency calculation (P0)
+  const agentTools = new Map<string, {
+    tools: { name: string; success: boolean }[]
+    sessionId: string
+    stepCount: number
+    injectedThisTurn: boolean  // P0: track if already injected this turn
+  }>()
 
   // --- Layer 1: Observe tool outcomes via tools/result ---
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
@@ -257,7 +611,7 @@ export function apply(ctx: Context, config: Config): void {
     if (!agent) return
 
     if (!agentTools.has(agent.id)) {
-      agentTools.set(agent.id, { tools: [], sessionId: agent.id })
+      agentTools.set(agent.id, { tools: [], sessionId: agent.id, stepCount: 0, injectedThisTurn: false })
     }
     agentTools.get(agent.id)!.tools.push({
       name: exec.name,
@@ -283,10 +637,19 @@ export function apply(ctx: Context, config: Config): void {
     const successCount = entry.tools.filter(t => t.success).length
     const toolSuccessRate = toolCallCount > 0 ? successCount / toolCallCount : 0
 
+    // P0: Step count — number of distinct steps in this turn
+    // We track it via the pre-step injection (each pre-step = one step)
+    const stepCount = Math.max(entry.stepCount, 1)
+
+    // P0: Step efficiency
+    const stepEfficiency = computeStepEfficiency(stepCount)
+
+    // P0: Difficulty
+    const hasFailures = entry.tools.some(t => !t.success)
+    const difficulty = computeDifficulty(stepCount, hasFailures)
+
     // --- Goal progress: read from dsh goal service ---
-    // If the agent has a goal and its phase is 'complete', the turn advanced the goal.
-    // If 'blocked', the turn stalled. If 'active', goal is in progress (advanced).
-    // If no goal, fall back to tool success rate.
+    // P1: Prioritize ctx.get('goals') for web mode
     let goalProgress: 'advanced' | 'stalled' | 'regressed' | 'none' = 'none'
     const goalService = ctx.get('goals')
     if (goalService && typeof goalService.get === 'function') {
@@ -312,7 +675,7 @@ export function apply(ctx: Context, config: Config): void {
           else if (reason?.kind === 'error') goalProgress = 'regressed'
           else if (reason?.kind === 'max-tokens') goalProgress = 'stalled'
           else if (reason?.kind === 'blocked') goalProgress = 'stalled'
-          else if (reason?.kind === 'aborted') goalProgress = 'stalled'
+          else if (reason?.kind === 'aborted') goalProgress = 'stalled'  // P1: aborted = negative
           else goalProgress = 'advanced' // unknown → assume advanced
         } else {
           goalProgress = toolSuccessRate >= 0.5 ? 'advanced' : 'stalled'
@@ -323,7 +686,6 @@ export function apply(ctx: Context, config: Config): void {
     }
 
     // --- Guard triggers: scan session events for repeat-tool-reminder injections ---
-    // repeat-tool-reminder injects user/messages with source.plugin = 'repeat-tool-reminder'
     let guardCount = 0
     try {
       const events = agent.session.events ?? []
@@ -333,8 +695,30 @@ export function apply(ctx: Context, config: Config): void {
       ).length
     } catch { /* session events not available */ }
 
-    // --- User feedback: read from message-feedback service ---
-    // message-feedback stores per-message positive/negative ratings in a sidecar
+    // P1: Implicit negative feedback detection
+    // Check for: user abort, user correction (step > 1 with user message after agent reply)
+    let implicitNegative = false
+    try {
+      const events = agent.session.events ?? []
+      // Check if turn ended due to abort
+      const turnEndEvents = events.filter((e: any) => e.type === 'turn/end' && e.data?.turn === turn)
+      const lastTurnEnd = turnEndEvents[turnEndEvents.length - 1]
+      if (lastTurnEnd?.data?.reason?.kind === 'aborted') {
+        implicitNegative = true
+      }
+      // Check for user correction: user messages after assistant in same turn
+      if (stepCount > 1) {
+        const userMsgsInTurn = events.filter((e: any) =>
+          e.type === 'user/message' && e.data?.turn === turn &&
+          e.data?.source?.plugin !== 'repeat-tool-reminder',
+        )
+        if (userMsgsInTurn.length > 0) {
+          implicitNegative = true
+        }
+      }
+    } catch { /* ignore */ }
+
+    // --- User feedback: combine explicit + implicit (P1) ---
     let userFeedback: 'positive' | 'negative' | 'none' = 'none'
     const feedbackService = ctx.get('messageFeedback')
     if (feedbackService && typeof feedbackService.list === 'function') {
@@ -343,14 +727,12 @@ export function apply(ctx: Context, config: Config): void {
         const items = (result as any)?.value?.items ?? (result as any)?.items ?? []
         if (Array.isArray(items) && items.length > 0) {
           const turnAssistantSeqs = new Set<number>()
-          // Find assistant messages from this turn
           const events = agent.session.events ?? []
           for (const e of events) {
             if (e.type === 'assistant/message' && (e as any).data?.turn === turn) {
               turnAssistantSeqs.add((e as any).seq)
             }
           }
-          // Check if any feedback targets messages from this turn
           const turnFeedback = items.filter((item: any) =>
             turnAssistantSeqs.has((item as any).messageSeq) ||
             turnAssistantSeqs.has((item as any).messageId),
@@ -363,28 +745,52 @@ export function apply(ctx: Context, config: Config): void {
         }
       } catch { /* feedback service may not be available */ }
     }
+    // P1: Apply implicit negative if no explicit feedback
+    if (userFeedback === 'none' && implicitNegative) {
+      userFeedback = 'negative'
+    }
 
-    // Compute outcome score using the same weights as our evaluator
+    // P0+P1: Compute outcome score with new weights
+    // goalProgress: 0.3, toolSuccess: 0.2, stepEfficiency: 0.25, guardPenalty: 0.15, feedback: 0.1
     const goalScore = goalProgress === 'advanced' ? 1.0 : goalProgress === 'stalled' ? 0.3 : goalProgress === 'regressed' ? 0.0 : 0.5
     const guardPenalty = Math.min(guardCount * 0.1, 0.15)
-    const feedbackScore = userFeedback === 'positive' ? 1.0 : userFeedback === 'negative' ? 0.0 : 0.5
+    const feedbackScore = userFeedback === 'positive' ? 1.0 : userFeedback === 'negative' ? 0.0 : 0.6  // P1: neutral = 0.6 (not 0.5)
     const outcomeScore = Math.max(0, Math.min(1,
-      goalScore * 0.4 + toolSuccessRate * 0.25 + (0.15 - guardPenalty) + feedbackScore * 0.2,
+      goalScore * 0.3 + toolSuccessRate * 0.2 + stepEfficiency * 0.25 + (0.15 - guardPenalty) + feedbackScore * 0.1,
     ))
 
     // Store the experience
     const toolsUsed = entry.tools.map(t => t.name)
-    const actions = JSON.stringify({ tools: entry.tools, goalProgress, feedback: userFeedback })
+    const actions = JSON.stringify({
+      tools: entry.tools,
+      goalProgress,
+      feedback: userFeedback,
+      stepCount,
+      difficulty,
+      stepEfficiency,
+      implicitNegative,
+    })
     const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+
+    // P5: Infer task pattern from first user message
+    let taskPattern: string | null = null
+    try {
+      const events = agent.session.events ?? []
+      const firstUserMsg = events.find((e: any) => e.type === 'user/message' && e.data?.turn === turn)
+      const msgText = firstUserMsg?.data?.text ?? firstUserMsg?.data?.content ?? ''
+      if (msgText) {
+        taskPattern = inferTaskPattern(String(msgText))
+      }
+    } catch { /* ignore */ }
 
     const expId = store.store(
       agent.id, `turn-${turn}`, outcomeScore, userFeedback,
-      toolsUsed, actions, wsDigest,
+      toolsUsed, actions, wsDigest, difficulty, taskPattern,
     )
 
-    log(`turn ${turn} scored — score=${outcomeScore.toFixed(2)} | goal=${goalProgress} tools=${toolCallCount} successRate=${toolSuccessRate.toFixed(2)} guards=${guardCount} feedback=${userFeedback} | exp ${expId}`)
+    log(`turn ${turn} scored — score=${outcomeScore.toFixed(2)} | goal=${goalProgress} tools=${toolCallCount} successRate=${toolSuccessRate.toFixed(2)} steps=${stepCount} efficiency=${stepEfficiency.toFixed(2)} difficulty=${difficulty} task=${taskPattern ?? 'unknown'} guards=${guardCount} feedback=${userFeedback} implicitNeg=${implicitNegative} | exp ${expId}`)
 
-    // Queue reflection if enabled
+    // P2: Synchronously generate lesson (don't wait for maintenance)
     if (config.metaCognitionEnabled) {
       pendingReflections.push({
         expId,
@@ -392,6 +798,8 @@ export function apply(ctx: Context, config: Config): void {
         outcomeScore,
         userFeedback,
         toolsUsed,
+        stepCount,
+        difficulty,
       })
     }
 
@@ -400,36 +808,82 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   // --- Layer 2: Inject experience at agent/pre-step ---
+  // P0: Only inject on the first step of each turn, skip subsequent steps
   if (config.behaviorAdapterEnabled) {
     ctx.on('agent/pre-step', async (
       payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal },
       next: () => Promise<any>,
     ) => {
-      log(`agent/pre-step fired — turn=${payload.turn} step=${payload.step}`)
-      const { agent } = payload
+      const { agent, turn, step } = payload
+
+      // P0: Track step count for this turn
+      if (agentTools.has(agent.id)) {
+        const entry = agentTools.get(agent.id)!
+        entry.stepCount = Math.max(entry.stepCount, step)
+      } else {
+        agentTools.set(agent.id, {
+          tools: [], sessionId: agent.id, stepCount: step, injectedThisTurn: false,
+        })
+      }
+
+      // P0: Only inject once per turn (first step)
+      const entry = agentTools.get(agent.id)!
+      if (entry.injectedThisTurn || step > 1) {
+        log(`agent/pre-step — turn=${turn} step=${step} (skipping injection, already injected this turn)`)
+        return next()
+      }
+
+      log(`agent/pre-step — turn=${turn} step=${step} (injecting)`)
 
       try {
         // Query experience store for similar past turns
         const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
-        const records = store.query([], wsDigest, 5, config.minInjectionScore)
+
+        // P5: Infer task pattern from current messages for better retrieval
+        const firstMsg = payload.messages?.[0]
+        const msgText = firstMsg && typeof firstMsg === 'object'
+          ? String((firstMsg as any).content ?? (firstMsg as any).text ?? '')
+          : ''
+        const currentTaskPattern = msgText ? inferTaskPattern(msgText) : null
+
+        // P5: Query with task pattern for better matching
+        const records = store.query([], wsDigest, 10, config.minInjectionScore)
 
         // Always call next() first (waterfall contract: never short-circuit)
         const decision = await next()
 
         if (records.length > 0) {
-          const sorted = [...records].sort((a, b) => b.outcomeScore - a.outcomeScore)
+          // P5: Sort by task pattern match, difficulty priority, then outcome score
+          const sorted = [...records].sort((a, b) => {
+            // P5: Same task pattern gets priority
+            if (currentTaskPattern) {
+              const aMatch = a.taskPattern === currentTaskPattern ? 1 : 0
+              const bMatch = b.taskPattern === currentTaskPattern ? 1 : 0
+              if (bMatch !== aMatch) return bMatch - aMatch
+            }
+            const dp = store.difficultyPriority(b.difficulty) - store.difficultyPriority(a.difficulty)
+            return dp !== 0 ? dp : b.outcomeScore - a.outcomeScore
+          })
           const best = sorted[0]
           const worst = sorted[sorted.length - 1]
 
-          log(`injecting ${records.length} past experiences into pre-step (best score ${best.outcomeScore.toFixed(2)})`)
+          // P3: Dynamic injection — allocate by difficulty
+          const high = sorted.filter(r => r.difficulty === 'high').slice(0, 5)
+          const medium = sorted.filter(r => r.difficulty === 'medium').slice(0, 2)
+          const low = sorted.filter(r => r.difficulty === 'low')
+            .slice(0, Math.max(0, 7 - high.length - medium.length))
+          const selected = [...high, ...medium, ...low]
+
+          log(`injecting ${selected.length} past experiences into pre-step (best score ${best.outcomeScore.toFixed(2)})`)
 
           const lines: string[] = ['## Past Experience (advisory)', '']
           if (best.outcomeScore >= 0.6) {
-            const lesson = best.lesson ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
+            // P4: Extract reusable_lesson from structured JSON
+            const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
             lines.push(`- **What worked**: ${lesson}`)
           }
           if (worst.outcomeScore <= 0.4) {
-            const lesson = worst.lesson ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
+            const lesson = extractLessonText(worst.lesson) ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
             lines.push(`- **What failed**: ${lesson}`)
           }
           lines.push('')
@@ -443,9 +897,12 @@ export function apply(ctx: Context, config: Config): void {
           })
 
           // Increment reuse counts
-          for (const rec of records) {
+          for (const rec of selected) {
             store.incrementReuse(rec.id)
           }
+
+          // P0: Mark as injected for this turn
+          entry.injectedThisTurn = true
 
           // Inject advisory context: prepend our message to the decision's messages
           if (decision.kind === 'enter') {
@@ -492,10 +949,14 @@ export function apply(ctx: Context, config: Config): void {
     outcomeScore: number
     userFeedback: string
     toolsUsed: string[]
+    stepCount?: number
+    difficulty?: 'low' | 'medium' | 'high'
   }
   const pendingReflections: PendingReflection[] = []
 
-  // Process reflections during maintenance (rule-based, no LLM)
+  // Process reflections during maintenance
+  // P2: Generates structured lesson JSON with full Reflection data (P4)
+  // P2: Also merges fragmented lessons periodically
   ctx.on('agent/run-maintenance', async () => {
     if (pendingReflections.length > 0) {
       log(`processing ${pendingReflections.length} pending reflections`)
@@ -503,18 +964,10 @@ export function apply(ctx: Context, config: Config): void {
     while (pendingReflections.length > 0) {
       const entry = pendingReflections.shift()!
 
-      // Rule-based reflection (fallback when no LLM available)
-      let lesson: string
-      if (entry.outcomeScore >= 0.7) {
-        lesson = `Tool sequence [${entry.toolsUsed.join(' → ')}] achieved a good outcome (score: ${entry.outcomeScore.toFixed(2)})`
-      } else if (entry.outcomeScore <= 0.3) {
-        lesson = `Tool sequence [${entry.toolsUsed.join(' → ')}] led to a poor outcome (score: ${entry.outcomeScore.toFixed(2)}) — try a different approach`
-      } else {
-        lesson = `Mixed outcome (score: ${entry.outcomeScore.toFixed(2)}) with tools [${entry.toolsUsed.join(', ')}]`
-      }
-
-      store.updateLesson(entry.expId, lesson)
-      log(`lesson generated — ${lesson}`)
+      // Generate structured reflection (P2: actionable lesson, P4: JSON stored)
+      const reflection = generateStructuredReflection(entry)
+      store.updateLesson(entry.expId, reflection)
+      log(`lesson generated — ${reflection.reusableLesson}`)
 
       // Boost confidence on similar past experiences if this was positive
       if (entry.outcomeScore >= 0.7) {
@@ -527,12 +980,81 @@ export function apply(ctx: Context, config: Config): void {
       }
     }
 
+    // P2: Merge fragmented lessons if enough have accumulated
+    try {
+      const groups = store.getUnmergedLessonGroups()
+      if (groups.length > 0) {
+        log(`merging ${groups.length} lesson groups`)
+        for (const group of groups) {
+          if (group.records.length < 2) continue
+          const mergedLesson = mergeLessonsRuleBased(group.records)
+          const sourceIds = group.records.map(r => r.id)
+          const tools = group.records[0].toolsUsed ?? []
+          store.mergeLessons(sourceIds, mergedLesson, group.records[0].difficulty as any, tools)
+          log(`merged ${group.records.length} lessons for difficulty=${group.difficulty} tools=${group.toolsKey}`)
+        }
+      }
+    } catch (err) {
+      log(`lesson merge error: ${(err as Error).message}`)
+    }
+
     // Distill preferences + log stats
     const stats = store.stats()
     if (stats.total > 0) {
-      log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positive} withLessons=${stats.withLessons}`)
+      log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positive} withLessons=${stats.withLessons} youngGen=${stats.youngGenCount} oldGen=${stats.oldGenCount} highDiff=${stats.highDifficultyCount} merged=${stats.mergedCount}`)
     }
   })
+
+  // --- P5: GUI Settings Bridge ---
+  // The dsh-self-improving-gui client plugin reads/writes through settingsScope
+  // with namespace 'dsh-self-improving-gui'. We bridge requests here.
+  // Note: 'settings' is NOT in our inject array (we don't want to hard-depend on it).
+  // We try to access it dynamically; if it's not available, the bridge is simply skipped.
+  try {
+    const settingsService = (ctx as any).get?.('settings')
+    if (settingsService && typeof settingsService.register === 'function') {
+      const guiScope = settingsService.register('dsh-self-improving-gui', rulesSchema())
+
+      // Push initial stats
+      void guiScope.update({ stats: JSON.stringify(store.stats()) })
+
+      // Watch for GUI requests (exportRequest, importData)
+      guiScope.watch((next: any) => {
+        // Handle export request
+        if (next.exportRequest === 'all') {
+          const exportData = store.exportAll()
+          void guiScope.update({
+            exportData: JSON.stringify(exportData),
+            exportRequest: null,
+          })
+          log(`GUI export — sent ${exportData.length} records`)
+        }
+
+        // Handle import request
+        if (next.importData) {
+          try {
+            const data = JSON.parse(next.importData)
+            const result = store.importExperiences(data)
+            void guiScope.update({
+              importResult: JSON.stringify(result),
+              importData: null,
+              stats: JSON.stringify(store.stats()),
+            })
+            log(`GUI import — imported=${result.imported} skipped=${result.skipped} invalid=${result.invalid}`)
+          } catch (e) {
+            void guiScope.update({
+              importResult: JSON.stringify({ imported: 0, skipped: 0, invalid: -1 }),
+              importData: null,
+            })
+            log(`GUI import error: ${(e as Error).message}`)
+          }
+        }
+      })
+      log('GUI settings bridge active')
+    }
+  } catch {
+    // 'settings' service not injected — GUI bridge disabled (headless mode)
+  }
 
   // --- Cleanup ---
   ctx.effect(() => () => {

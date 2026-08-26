@@ -1,0 +1,232 @@
+{
+  "timestamp": "2026-08-25T09:37:13.310Z",
+  "provider": "qwen",
+  "model": "qwen3.7-plus-2026-05-26",
+  "estimatedTokens": 79000,
+  "budget": 500000,
+  "baseline": {
+    "phaseName": "baseline",
+    "tasks": [
+      {
+        "taskId": "task-1",
+        "prompt": "Create a Node.js project: a file config.js exporting an object { port: 3000, env: \"dev\" }, and a file app.js that imports config and starts an HTTP server on config.port responding with \"OK\" to any request.",
+        "success": true,
+        "toolCalls": 1,
+        "outcomeScore": null,
+        "difficulty": null,
+        "taskPattern": null,
+        "injected": false,
+        "fileCount": 2,
+        "totalCodeLines": 14,
+        "rawStderr": "",
+        "assistantReply": "Everything works. Here's a summary of the project:\n\n- **`config.js`** — Exports `{ port: 3000, env: \"dev\" }` using `module.exports`.\n- **`app.js`** — Requires `./config`, creates an HTTP server on `config.port` (3000) that responds with `\"OK\"` to any request.\n\nVerified: the server starts, prints `Server running on port 3000 in dev mode`, and `curl` returns `OK`."
+      },
+      {
+        "taskId": "task-2",
+        "prompt": "In the existing project, create a file router.js that exports a function handleRequest(req) which routes GET / to \"home\", GET /api to \"api\", and everything else to 404. Update app.js to use this router instead of the hardcoded response.",
+        "success": true,
+        "toolCalls": 1,
+        "outcomeScore": null,
+        "difficulty": null,
+        "taskPattern": null,
+        "injected": false,
+        "fileCount": 3,
+        "totalCodeLines": 28,
+        "rawStderr": "",
+        "assistantReply": "Done. Here's a summary of the changes:\n\n**Created `router.js`** — exports `handleRequest(req)` with three routes:\n| Request | Response |\n|---------|----------|\n| `GET /` | `{ status: 200, body: \"home\" }` |\n| `GET /api` | `{ status: 200, body: \"api\" }` |\n| Everything else | `{ status: 404, body: \"404\" }` |\n\n**Updated `app.js`** — replaced the hardcoded `\"OK\"` response with a call to `handleRequest(req)`, using the returned `status` and `body` to write the response."
+      },
+      {
+        "taskId": "task-3",
+        "prompt": "Create a file auth.js that exports a function checkAuth(token) returning true if token starts with \"Bearer \". Update app.js to call checkAuth before handleRequest, and reject requests without valid auth with 401 status.",
+        "success": true,
+        "toolCalls": 1,
+        "outcomeScore": null,
+        "difficulty": null,
+        "taskPattern": null,
+        "injected": false,
+        "fileCount": 4,
+        "totalCodeLines": 42,
+        "rawStderr": "",
+        "assistantReply": "Done. Here's what was created/updated:\n\n**`auth.js`** (new) — exports `checkAuth(token)` which returns `true` if the token is a string starting with `\"Bearer \"`, `false` otherwise.\n\n**`app.js`** (updated) — now:\n1. Imports `checkAuth` from `./auth`\n2. Reads the `Authorization` header from each incoming request\n3. Calls `checkAuth(token)` before `handleRequest` — if it returns `false`, responds with **401 Unauthorized** and short-circuits; otherwise proceeds to `handleRequest` as before."
+      },
+      {
+        "taskId": "task-4",
+        "prompt": "There is a bug: the auth check in app.js blocks the root path \"/\" even for unauthenticated users. Fix it so that only /api requires auth, while / is public. Make sure the server still starts correctly.",
+        "success": true,
+        "toolCalls": 1,
+        "outcomeScore": null,
+        "difficulty": null,
+        "taskPattern": null,
+        "injected": false,
+        "fileCount": 4,
+        "totalCodeLines": 44,
+        "rawStderr": "",
+        "assistantReply": "All tests pass. Here's a summary of the fix:\n\n**Bug:** The auth check in `app.js` (lines 7–12) ran unconditionally for every request, blocking `GET /` for unauthenticated users.\n\n**Fix:** Wrapped the auth check in a condition that only triggers for URLs starting with `/api`:\n\n```js\nif (req.url.startsWith(\"/api\")) {\n  const token = req.headers[\"authorization\"];\n  if (!checkAuth(token)) {\n    res.writeHead(401, { \"Content-Type\": \"text/plain\" });\n    res.end(\"Unauthorized\");\n    return;\n  }\n}\n```\n\n**Verified behavior:**\n| Request | Auth | Result |\n|---|---|---|\n| `GET /` | none | ✅ 200 \"home\" |\n| `GET /api` | none | ✅ 401 \"Unauthorized\" |\n| `GET /api` | `Bearer mytoken` | ✅ 200 \"api\" |\n| `GET /unknown` | none | ✅ 404 \"404\" |\n\nThe server starts correctly and the root path is now publicly accessible."
+      },
+      {
+        "taskId": "task-5",
+        "prompt": "Create test-app.js that tests: 1) config has port 3000, 2) router routes / to home, 3) auth rejects empty token, 4) auth accepts \"Bearer xyz\". Use Node.js assert module.",
+        "success": true,
+        "toolCalls": 2,
+        "outcomeScore": null,
+        "difficulty": null,
+        "taskPattern": null,
+        "injected": false,
+        "fileCount": 5,
+        "totalCodeLines": 71,
+        "rawStderr": "",
+        "assistantReply": "All 4 tests pass. Here's a summary of `test-app.js`:\n\n| # | Test | Assertion |\n|---|------|-----------|\n| 1 | **config has port 3000** | `config.port === 3000` |\n| 2 | **router routes `/` to home** | `handleRequest({ method: \"GET\", url: \"/\" })` returns `{ status: 200, body: \"home\" }` |\n| 3 | **auth rejects empty token** | `checkAuth(\"\")` returns `false` |\n| 4 | **auth accepts \"Bearer xyz\"** | `checkAuth(\"Bearer xyz\")` returns `true` |\n\nThe test file uses Node.js built-in `assert` module with `assert.strictEqual` for each check, and logs a `PASS` message for every successful assertion."
+      }
+    ]
+  },
+  "enabledR1": {
+    "phaseName": "enabled-r1",
+    "tasks": [
+      {
+        "taskId": "task-1",
+        "prompt": "Create a Node.js project: a file config.js exporting an object { port: 3000, env: \"dev\" }, and a file app.js that imports config and starts an HTTP server on config.port responding with \"OK\" to any request.",
+        "success": true,
+        "toolCalls": 3,
+        "outcomeScore": 0.94,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 2,
+        "totalCodeLines": 17,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] tool/result — write OK\n[self-improving] tool/result — write OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.94 | goal=advanced tools=3 successRate=1.00 steps=3 efficiency=0.90 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W486JWGWAGMSN77XQVDNEN\n",
+        "assistantReply": "Both files are created and working:\n\n- **`config.js`** — exports `{ port: 3000, env: \"dev\" }`\n- **`app.js`** — imports config, starts an HTTP server on port 3000, and responds with `\"OK\"` to any request\n\nVerified by running the server and hitting it with `curl` — it responded with `OK` as expected."
+      },
+      {
+        "taskId": "task-2",
+        "prompt": "In the existing project, create a file router.js that exports a function handleRequest(req) which routes GET / to \"home\", GET /api to \"api\", and everything else to 404. Update app.js to use this router instead of the hardcoded response.",
+        "success": true,
+        "toolCalls": 8,
+        "outcomeScore": 0.89,
+        "difficulty": "high",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 3,
+        "totalCodeLines": 31,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 1 past experiences into pre-step (best score 0.94)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=6 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=7 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.89 | goal=advanced tools=8 successRate=1.00 steps=7 efficiency=0.70 difficulty=high task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W490D70H4YJBB7WYH288KM\n",
+        "assistantReply": "Done. Here's a summary of the changes:\n\n**Created `router.js`** — exports `handleRequest(req)` which returns a `{ status, body }` object:\n- `GET /` → `200 \"home\"`\n- `GET /api` → `200 \"api\"`\n- Everything else → `404 \"Not Found\"`\n\n**Updated `app.js`** — replaced the hardcoded `'OK'` response with a call to `handleRequest(req)`, using the returned `status` and `body` to write the response.\n\nThe smoke test confirms all routes behave correctly, including that non-GET methods to `/` correctly fall through to 404."
+      },
+      {
+        "taskId": "task-3",
+        "prompt": "Create a file auth.js that exports a function checkAuth(token) returning true if token starts with \"Bearer \". Update app.js to call checkAuth before handleRequest, and reject requests without valid auth with 401 status.",
+        "success": true,
+        "toolCalls": 5,
+        "outcomeScore": 0.91,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 4,
+        "totalCodeLines": 44,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 2 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — glob OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — write OK\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.91 | goal=advanced tools=5 successRate=1.00 steps=5 efficiency=0.80 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W49JZ5YNFEKXXQ5MYNS7R2\n",
+        "assistantReply": "Done. Here's what was created and changed:\n\n**`auth.js`** (new) — exports `checkAuth(token)` which returns `true` when `token` is a string starting with `\"Bearer \"`, `false` otherwise.\n\n**`app.js`** (updated):\n- Imports `checkAuth` from `./auth`\n- Reads the `Authorization` header from each incoming request\n- Calls `checkAuth(token)` **before** `handleRequest(req)`\n- If auth fails, responds with **401 status** and `\"Unauthorized\"` body, skipping `handleRequest` entirely"
+      },
+      {
+        "taskId": "task-4",
+        "prompt": "There is a bug: the auth check in app.js blocks the root path \"/\" even for unauthenticated users. Fix it so that only /api requires auth, while / is public. Make sure the server still starts correctly.",
+        "success": true,
+        "toolCalls": 8,
+        "outcomeScore": 0.9,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 4,
+        "totalCodeLines": 46,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=6 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.90 | goal=advanced tools=8 successRate=1.00 steps=6 efficiency=0.75 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4AQXKPP1H18FVEJ9DHJ7J\n",
+        "assistantReply": "All tests pass. Here's a summary of the fix:\n\n**Bug:** In `app.js`, the `checkAuth()` call was applied unconditionally to every incoming request, which meant `GET /` (the public home page) was blocked with a 401 for unauthenticated users.\n\n**Fix:** Wrapped the auth check in a condition that only triggers for URLs starting with `/api`:\n\n```js\nif (req.url && req.url.startsWith('/api')) {\n  const token = req.headers['authorization'];\n  if (!checkAuth(token)) {\n    res.writeHead(401, { 'Content-Type': 'text/plain' });\n    res.end('Unauthorized');\n    return;\n  }\n}\n```\n\n**Verified behavior:**\n| Request | Auth | Result |\n|---------|------|--------|\n| `GET /` | None | ✅ 200 `home` (public) |\n| `GET /api` | None | ✅ 401 `Unauthorized` (auth required) |\n| `GET /api` | `Bearer test-token` | ✅ 200 `api` |\n| `GET /unknown` | None | ✅ 404 `Not Found` |\n\nThe server starts correctly and all routing/auth behavior works as expected."
+      },
+      {
+        "taskId": "task-5",
+        "prompt": "Create test-app.js that tests: 1) config has port 3000, 2) router routes / to home, 3) auth rejects empty token, 4) auth accepts \"Bearer xyz\". Use Node.js assert module.",
+        "success": true,
+        "toolCalls": 7,
+        "outcomeScore": 0.91,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 5,
+        "totalCodeLines": 73,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — write OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.91 | goal=advanced tools=7 successRate=1.00 steps=5 efficiency=0.80 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4BFVQKAHB1CA85XGCFBZ9\n",
+        "assistantReply": "All 4 tests pass. Here's a summary of `test-app.js`:\n\n| # | Test | Assertion |\n|---|------|-----------|\n| 1 | Config has port 3000 | `config.port === 3000` |\n| 2 | Router routes `/` to home | `handleRequest({ method: 'GET', url: '/' })` → `{ status: 200, body: 'home' }` |\n| 3 | Auth rejects empty token | `checkAuth('') === false` |\n| 4 | Auth accepts `\"Bearer xyz\"` | `checkAuth('Bearer xyz') === true` |\n\nThe test file uses Node.js built-in `assert` module with `assert.strictEqual` for each check, and logs a `PASS` message per test along with a final summary."
+      }
+    ]
+  },
+  "enabledR2": {
+    "phaseName": "enabled-r2",
+    "tasks": [
+      {
+        "taskId": "task-1",
+        "prompt": "Create a Node.js project: a file config.js exporting an object { port: 3000, env: \"dev\" }, and a file app.js that imports config and starts an HTTP server on config.port responding with \"OK\" to any request.",
+        "success": true,
+        "toolCalls": 4,
+        "outcomeScore": 0.92,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 2,
+        "totalCodeLines": 14,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — write OK\n[self-improving] tool/result — write OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.92 | goal=advanced tools=4 successRate=1.00 steps=4 efficiency=0.85 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4C5Q5G2CW331B2A0XCSKP\n",
+        "assistantReply": "The Node.js project is set up and verified working. Here's what was created:\n\n- **`config.js`** — Exports `{ port: 3000, env: \"dev\" }`\n- **`app.js`** — Imports `config`, starts an HTTP server on `config.port` (3000), and responds with `\"OK\"` to any request\n- **`package.json`** — Auto-generated via `npm init -y`\n\n**Verification:** The server started successfully, logged `Server running on port 3000 in dev mode`, and `curl http://localhost:3000` returned `OK` as expected."
+      },
+      {
+        "taskId": "task-2",
+        "prompt": "In the existing project, create a file router.js that exports a function handleRequest(req) which routes GET / to \"home\", GET /api to \"api\", and everything else to 404. Update app.js to use this router instead of the hardcoded response.",
+        "success": true,
+        "toolCalls": 9,
+        "outcomeScore": 0.9,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 3,
+        "totalCodeLines": 28,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — write OK\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=6 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.90 | goal=advanced tools=9 successRate=1.00 steps=6 efficiency=0.75 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4D1TEE2AT67X5XS4BKDM9\n",
+        "assistantReply": "Done. Here's a summary of the changes:\n\n### `router.js` (new file)\nExports `handleRequest(req)` which returns `{ status, body }` based on the request:\n- **GET `/`** → `{ status: 200, body: \"home\" }`\n- **GET `/api`** → `{ status: 200, body: \"api\" }`\n- **Everything else** → `{ status: 404, body: \"Not Found\" }`\n\n### `app.js` (updated)\n- Added `require(\"./router\")` to import `handleRequest`\n- Replaced the hardcoded `\"OK\"` response with a call to `handleRequest(req)`, using the returned `status` and `body` to write the response"
+      },
+      {
+        "taskId": "task-3",
+        "prompt": "Create a file auth.js that exports a function checkAuth(token) returning true if token starts with \"Bearer \". Update app.js to call checkAuth before handleRequest, and reject requests without valid auth with 401 status.",
+        "success": true,
+        "toolCalls": 10,
+        "outcomeScore": 0.9,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 4,
+        "totalCodeLines": 41,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — glob OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — write OK\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=6 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.90 | goal=advanced tools=10 successRate=1.00 steps=6 efficiency=0.75 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4DVG90YW37F2J0PDSWG0F\n",
+        "assistantReply": "Done! Here's a summary of the changes:\n\n### `auth.js` (new file)\nExports `checkAuth(token)` which returns `true` if `token` is a string starting with `\"Bearer \"`, and `false` otherwise.\n\n### `app.js` (updated)\n- Imports `checkAuth` from `./auth`\n- Reads the `Authorization` header from each incoming request\n- If `checkAuth(token)` returns `false`, responds immediately with **401 Unauthorized** and short-circuits before `handleRequest` is called\n- Only proceeds to `handleRequest` when the token is valid (starts with `\"Bearer \"`)\n\nVerified behavior:\n| Input | Result |\n|---|---|\n| `\"Bearer xyz\"` | ✅ `true` |\n| `\"Basic xyz\"` | ❌ `false` |\n| `undefined` | ❌ `false` |\n| `\"\"` | ❌ `false` |"
+      },
+      {
+        "taskId": "task-4",
+        "prompt": "There is a bug: the auth check in app.js blocks the root path \"/\" even for unauthenticated users. Fix it so that only /api requires auth, while / is public. Make sure the server still starts correctly.",
+        "success": true,
+        "toolCalls": 9,
+        "outcomeScore": 0.9,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 4,
+        "totalCodeLines": 43,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — edit OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=6 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.90 | goal=advanced tools=9 successRate=1.00 steps=6 efficiency=0.75 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4F5JNWF84761ZXHYKF8GQ\n",
+        "assistantReply": "All tests pass. Here's a summary of the fix:\n\n**Bug:** In `app.js`, the `checkAuth()` call ran unconditionally for every incoming request before routing, which blocked `GET /` (and all other paths) for unauthenticated users.\n\n**Fix:** Wrapped the auth check in a condition that only applies it when the request URL starts with `/api`:\n\n```js\nif (req.url && req.url.startsWith(\"/api\")) {\n  const token = req.headers[\"authorization\"];\n  if (!checkAuth(token)) {\n    res.writeHead(401, { \"Content-Type\": \"text/plain\" });\n    res.end(\"Unauthorized\");\n    return;\n  }\n}\n```\n\n**Verified behavior:**\n| Request | Auth | Result |\n|---------|------|--------|\n| `GET /` | None | ✅ 200 \"home\" |\n| `GET /api` | None | ✅ 401 \"Unauthorized\" |\n| `GET /api` | Bearer token | ✅ 200 \"api\" |\n| `GET /unknown` | None | ✅ 404 \"Not Found\" |\n\nThe server starts correctly on port 3000."
+      },
+      {
+        "taskId": "task-5",
+        "prompt": "Create test-app.js that tests: 1) config has port 3000, 2) router routes / to home, 3) auth rejects empty token, 4) auth accepts \"Bearer xyz\". Use Node.js assert module.",
+        "success": true,
+        "toolCalls": 7,
+        "outcomeScore": 0.91,
+        "difficulty": "medium",
+        "taskPattern": "unknown",
+        "injected": true,
+        "fileCount": 5,
+        "totalCodeLines": 68,
+        "rawStderr": "[self-improving] plugin loaded {\"dbPath\":\"~/.dsh/experiences-e2e.db\",\"metaCognition\":true,\"behaviorAdapter\":true}\n[self-improving] agent/pre-step — turn=1 step=1 (injecting)\n[self-improving] injecting 3 past experiences into pre-step (best score 0.89)\n[self-improving] pre-step injection error: Cannot find package '@deepseek-ai/dsh-llm' imported from /Users/xh/project/dsh-self-improving/dist/index.js\n[self-improving] tool/result — str_replace_editor OK\n[self-improving] agent/pre-step — turn=1 step=2 (skipping injection, already injected this turn)\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] tool/result — read OK\n[self-improving] agent/pre-step — turn=1 step=3 (skipping injection, already injected this turn)\n[self-improving] tool/result — write OK\n[self-improving] agent/pre-step — turn=1 step=4 (skipping injection, already injected this turn)\n[self-improving] tool/result — bash OK\n[self-improving] agent/pre-step — turn=1 step=5 (skipping injection, already injected this turn)\n[self-improving] agent/turn-stopping fired — turn=1\n[self-improving] turn 1 scored — score=0.91 | goal=advanced tools=7 successRate=1.00 steps=5 efficiency=0.80 difficulty=medium task=unknown guards=0 feedback=none implicitNeg=false | exp 01M0W4FVGTCPVFCG6V5CHGS6X2\n",
+        "assistantReply": "Created `test-app.js` — all 4 tests pass. Here's what it covers:\n\n| # | Test | Assertion |\n|---|------|-----------|\n| 1 | **Config port** | `config.port === 3000` |\n| 2 | **Router → home** | `handleRequest({ method: \"GET\", url: \"/\" })` returns `{ status: 200, body: \"home\" }` |\n| 3 | **Auth rejects empty** | `checkAuth(\"\") === false` |\n| 4 | **Auth accepts Bearer** | `checkAuth(\"Bearer xyz\") === true` |\n\nEach assertion uses `assert.strictEqual` from Node.js built-in `assert` module, with descriptive failure messages. Run with `node test-app.js`."
+      }
+    ]
+  }
+}

@@ -56,9 +56,10 @@ test('perfect turn gets high score', () => {
 
   const outcome = evaluator.evaluate(data)
 
-  // Expected: goal(1.0)*0.4 + tool(1.0)*0.25 + guard(0.15) + feedback(1.0)*0.2
-  // = 0.4 + 0.25 + 0.15 + 0.2 = 1.0
-  assertClose(outcome.outcomeScore, 1.0, 0.01, 'perfect turn should score 1.0')
+  // P0: New weights: goal(0.3) + tool(0.2) + efficiency(0.25) + guard(0.15) + feedback(0.1)
+  // 2 tools → stepCount=2, stepEfficiency=0.95
+  // Expected: 1.0*0.3 + 1.0*0.2 + 0.95*0.25 + 0.15 + 1.0*0.1 = 0.9875
+  assertClose(outcome.outcomeScore, 0.9875, 0.01, 'perfect turn should score ~0.99')
   assert(outcome.goalProgress === 'advanced', 'goalProgress should be advanced')
   assert(outcome.toolSuccessRate === 1.0, 'toolSuccessRate should be 1.0')
   assert(outcome.guardTriggerCount === 0, 'guardTriggerCount should be 0')
@@ -93,9 +94,9 @@ test('terrible turn gets low score', () => {
 
   const outcome = evaluator.evaluate(data)
 
-  // Expected: goal(0.0)*0.4 + tool(0.0)*0.25 + guard(0.15-0.1=0.05) + feedback(0.0)*0.2
-  // = 0 + 0 + 0.05 + 0 = 0.05
-  assertClose(outcome.outcomeScore, 0.05, 0.01, 'terrible turn should score ~0.05')
+  // P0: 3 tools → stepCount=3, stepEfficiency=0.9, hasFailures → difficulty='high'
+  // Expected: 0.0*0.3 + 0.0*0.2 + 0.9*0.25 + (0.15-0.1) + 0.0*0.1 = 0.275
+  assertClose(outcome.outcomeScore, 0.275, 0.01, 'terrible turn should score ~0.275')
   assert(outcome.goalProgress === 'regressed', 'goalProgress should be regressed')
   assert(outcome.toolSuccessRate === 0.0, 'toolSuccessRate should be 0.0')
   assert(outcome.guardTriggerCount === 1, 'guardTriggerCount should be 1')
@@ -126,9 +127,9 @@ test('mixed turn gets middle score', () => {
 
   const outcome = evaluator.evaluate(data)
 
-  // Expected: goal(0.3)*0.4 + tool(0.5)*0.25 + guard(0.15) + feedback(0.5)*0.2
-  // = 0.12 + 0.125 + 0.15 + 0.1 = 0.495
-  assertClose(outcome.outcomeScore, 0.495, 0.01, 'mixed turn should score ~0.495')
+  // P0: 2 tools → stepCount=2, stepEfficiency=0.95, hasFailures → difficulty='high'
+  // Expected: 0.3*0.3 + 0.5*0.2 + 0.95*0.25 + 0.15 + 0.5*0.1 = 0.6275
+  assertClose(outcome.outcomeScore, 0.6275, 0.01, 'mixed turn should score ~0.63')
   assert(outcome.toolCallCount === 2, 'toolCallCount should be 2')
   assertClose(outcome.toolSuccessRate, 0.5, 0.01, 'toolSuccessRate should be 0.5')
 
@@ -162,10 +163,10 @@ test('multiple guard triggers cap at guard weight', () => {
 
   const outcome = evaluator.evaluate(data)
 
+  // P0: 1 tool → stepCount=1, stepEfficiency=1.0
   // guard penalty = min(4 * 0.1, 0.15) = 0.15 → guard component = 0
-  // goal(0.3)*0.4 + tool(1.0)*0.25 + guard(0) + feedback(0.5)*0.2
-  // = 0.12 + 0.25 + 0 + 0.1 = 0.47
-  assertClose(outcome.outcomeScore, 0.47, 0.01, 'should cap guard penalty at weight')
+  // Expected: 0.3*0.3 + 1.0*0.2 + 1.0*0.25 + 0 + 0.5*0.1 = 0.59
+  assertClose(outcome.outcomeScore, 0.59, 0.01, 'should cap guard penalty at weight')
 
   store.close()
 })
@@ -233,11 +234,127 @@ test('turn with no tool calls', () => {
 
   const outcome = evaluator.evaluate(data)
 
-  // goal(0.5)*0.4 + tool(0)*0.25 + guard(0.15) + feedback(0.5)*0.2
-  // = 0.2 + 0 + 0.15 + 0.1 = 0.45
-  assertClose(outcome.outcomeScore, 0.45, 0.01, 'empty turn should score ~0.45')
+  // P0: 0 tools → stepCount=0, stepEfficiency=1.0, difficulty='low'
+  // Expected: 0.5*0.3 + 0*0.2 + 1.0*0.25 + 0.15 + 0.5*0.1 = 0.6
+  assertClose(outcome.outcomeScore, 0.6, 0.01, 'empty turn should score ~0.6')
   assert(outcome.toolCallCount === 0, 'toolCallCount should be 0')
   assert(outcome.toolSuccessRate === 0.0, 'toolSuccessRate should be 0 with no calls')
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P0 Test 7: Step efficiency dimension
+// ---------------------------------------------------------------------------
+
+test('step efficiency differentiates 2-step vs 18-step turns', () => {
+  const store = new ExperienceStore()
+  const evaluator = new OutcomeEvaluator(store)
+
+  // 2-step turn — high efficiency
+  const shortData: TurnData = {
+    turnId: 'turn-short',
+    sessionId: 'session-1',
+    goalProgress: 'advanced',
+    toolResults: [
+      { toolName: 'read_file', success: true, durationMs: 100 },
+      { toolName: 'edit_file', success: true, durationMs: 200 },
+    ],
+    guardTriggers: [],
+    userFeedback: 'positive',
+    stepCount: 2,
+    timestamp: Date.now(),
+  }
+
+  // 18-step turn — low efficiency
+  const longData: TurnData = {
+    turnId: 'turn-long',
+    sessionId: 'session-1',
+    goalProgress: 'advanced',
+    toolResults: Array(18).fill({ toolName: 'grep', success: true, durationMs: 100 }),
+    guardTriggers: [],
+    userFeedback: 'positive',
+    stepCount: 18,
+    timestamp: Date.now(),
+  }
+
+  const shortOutcome = evaluator.evaluate(shortData)
+  const longOutcome = evaluator.evaluate(longData)
+
+  // Both have same goal/tools/guard/feedback, but different step efficiency
+  assertClose(shortOutcome.stepEfficiency, 0.95, 0.01, '2-step efficiency should be 0.95')
+  assertClose(longOutcome.stepEfficiency, 0.15, 0.01, '18-step efficiency should be 0.15')
+  assert(shortOutcome.outcomeScore > longOutcome.outcomeScore, 'short turn should score higher than long turn')
+
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// P0 Test 8: Difficulty classification
+// ---------------------------------------------------------------------------
+
+test('difficulty is computed correctly', () => {
+  const store = new ExperienceStore()
+  const evaluator = new OutcomeEvaluator(store)
+
+  // 1 step, all success → low
+  const easyData: TurnData = {
+    turnId: 't-easy',
+    sessionId: 's1',
+    goalProgress: 'advanced',
+    toolResults: [{ toolName: 'write_file', success: true, durationMs: 50 }],
+    guardTriggers: [],
+    userFeedback: 'positive',
+    stepCount: 1,
+    timestamp: Date.now(),
+  }
+
+  // 5 steps, all success → medium
+  const mediumData: TurnData = {
+    turnId: 't-medium',
+    sessionId: 's1',
+    goalProgress: 'advanced',
+    toolResults: Array(5).fill({ toolName: 'grep', success: true, durationMs: 50 }),
+    guardTriggers: [],
+    userFeedback: 'positive',
+    stepCount: 5,
+    timestamp: Date.now(),
+  }
+
+  // 10 steps, with failure → high
+  const hardData: TurnData = {
+    turnId: 't-hard',
+    sessionId: 's1',
+    goalProgress: 'stalled',
+    toolResults: [
+      ...Array(9).fill({ toolName: 'grep', success: true, durationMs: 50 }),
+      { toolName: 'write_file', success: false, durationMs: 200 },
+    ],
+    guardTriggers: [],
+    userFeedback: 'none',
+    stepCount: 10,
+    timestamp: Date.now(),
+  }
+
+  // 2 steps, all success → low
+  const twoStepData: TurnData = {
+    turnId: 't-two',
+    sessionId: 's1',
+    goalProgress: 'advanced',
+    toolResults: [
+      { toolName: 'read_file', success: true, durationMs: 50 },
+      { toolName: 'edit_file', success: true, durationMs: 50 },
+    ],
+    guardTriggers: [],
+    userFeedback: 'positive',
+    stepCount: 2,
+    timestamp: Date.now(),
+  }
+
+  assert(evaluator.evaluate(easyData).difficulty === 'low', '1-step all success should be low')
+  assert(evaluator.evaluate(twoStepData).difficulty === 'low', '2-step all success should be low')
+  assert(evaluator.evaluate(mediumData).difficulty === 'medium', '5-step all success should be medium')
+  assert(evaluator.evaluate(hardData).difficulty === 'high', '10-step with failure should be high')
 
   store.close()
 })

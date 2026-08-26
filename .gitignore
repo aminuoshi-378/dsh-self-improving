@@ -1,5 +1,7 @@
 node_modules/
 dist/
+gui/lib/
+gui/node_modules
 *.tgz
 *.db
 *.db-wal

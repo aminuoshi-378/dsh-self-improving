@@ -80,11 +80,12 @@ stderr 会输出：
 ```
 [self-improving] plugin loaded
 [self-improving] tool/result — write OK
-[self-improving] turn 1 scored — score=0.78
+[self-improving] turn 1 scored — score=0.78 | goal=advanced tools=1 successRate=1.00 steps=1 efficiency=1.00 difficulty=low
 ```
 
-再跑第二个任务，会看到经验注入：
+再跑第二个任务，会看到经验注入（P0: 每个 turn 只注入一次）：
 ```
+[self-improving] agent/pre-step — turn=2 step=1 (injecting)
 [self-improving] injecting 1 past experiences into pre-step (best score 0.78)
 ```
 
@@ -101,12 +102,40 @@ stderr 会输出：
     minInjectionScore: 0.3             # 只注入评分 >= 0.3 的经验
 ```
 
+#### 内置策略（无需配置，自动生效）
+
+- **P0 经验去重**：相同工具序列的经验只保留最新一条
+- **P0 每 turn 只注入一次**：经验仅在 turn 的第一个 step 注入，不重复
+- **P0 步数效率评分**：步数越少分越高，2步=0.95，10步=0.55
+- **P0 任务难度分级**：high（7+步或有过失败）的经验优先注入，low（1-2步全成功）只在不足时填充
+- **P1 隐式负反馈**：用户中断/纠正自动识别为负反馈，不依赖主动点赞/踩
+- **P2 lesson 合并**：每积累 20 条相似 lesson 自动合并，避免碎片化
+- **P3 分代经验管理**：新生代（200条）+ 老年代（800条）双区域 GC
+- **P4 两阶段召回**：粗筛（SQL）+ 精筛（综合评分排序）
+- **P5 任务类型分类**：自动从用户消息推断任务类型（bugfix/feature/refactoring/search/test-writing），同类经验优先注入
+- **P5 WebUI 经验库可视化**：安装 GUI 插件后在 Settings → Plugins → Experiences 查看统计、导入/导出经验
+
+### 安装 WebUI 经验库面板（可选）
+
+```bash
+cd dsh-self-improving/gui
+pnpm install
+pnpm run build
+pnpm run bundle
+pnpm pack    # 生成 dsh-self-improving-gui-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-self-improving-gui-0.1.0.tgz
+```
+
+安装后重启 dsh web，在 设置 → 插件 → Experiences 里查看经验库统计和导入/导出。
+
+> link 方式：在 `~/.dsh/profiles/web/package.json` 里加 `"dsh-self-improving-gui": "link:/absolute/path/to/dsh-self-improving/gui"`，然后 `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`。
+
 ### 本地开发测试
 
 ```bash
 cd dsh-self-improving
 pnpm install          # 安装依赖
-pnpm test             # 跑 29 个单元测试
+pnpm test             # 跑 44 个单元测试
 pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
 ```
 
@@ -189,14 +218,16 @@ pnpm test             # 跑 10 个测试
 
 ---
 
-## 两个插件一起装
+## 全部一起装
 
 ### tarball 方式
 
 ```bash
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-self-improving-gui-0.1.0.tgz
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
+dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
 dsh --profile web
 ```
 
@@ -208,7 +239,9 @@ dsh --profile web
 {
   "dependencies": {
     "dsh-self-improving": "link:/path/to/dsh-self-improving",
-    "dsh-rule-enforcement": "link:/path/to/dsh-self-improving/dsh-rule-enforcement"
+    "dsh-self-improving-gui": "link:/path/to/dsh-self-improving/gui",
+    "dsh-rule-enforcement": "link:/path/to/dsh-self-improving/dsh-rule-enforcement",
+    "dsh-rule-enforcement-gui": "link:/path/to/dsh-self-improving/dsh-rule-enforcement/src/gui"
   }
 }
 ```
@@ -245,6 +278,6 @@ dsh --profile web
 
 ## 更多文档
 
-- [架构设计](docs/design.md) — 四层架构详解、安全边界、实施路径
-- [插件开发笔记](docs/plugin-dev-notes.md) — dsh 插件开发实践要点和陷阱
+- [架构设计](docs/design.md) — 四层架构详解、P0-P5 实现细节、安全边界、实施路径
+- [待办事项](todo.md) — P0-P5 完成情况与后续计划
 - [变更日志](CHANGELOG.md)
