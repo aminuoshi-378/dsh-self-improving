@@ -1039,16 +1039,16 @@ export class ExperienceStore {
     const insertStmt = this.db.prepare(`
       INSERT OR IGNORE INTO experiences (
         id, session_id, turn_id, created_at,
-        context_hash, task_pattern, tools_used, workspace_digest,
+        context_hash, content_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
         difficulty, generation, last_injected_at, merged,
-        tags, confidence, reuse_count
+        tags, confidence, reuse_count, source
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
-        @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
+        @contextHash, @contentHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
         @difficulty, @generation, @lastInjectedAt, @merged,
-        @tags, @confidence, @reuseCount
+        @tags, @confidence, @reuseCount, @source
       )
     `)
 
@@ -1068,6 +1068,8 @@ export class ExperienceStore {
         item.toolsUsed,
         null,
       )
+      // K1: Preserve source and content_hash from import data
+      const contentHash = item.contentHash ?? this.computeContentHash(item.actions, null) ?? null
 
       insertStmt.run({
         id: item.id,
@@ -1075,6 +1077,7 @@ export class ExperienceStore {
         turnId: `import-${item.createdAt}`,
         createdAt: item.createdAt,
         contextHash,
+        contentHash,
         taskPattern: item.taskPattern,
         toolsUsed: item.toolsUsed ? JSON.stringify(item.toolsUsed) : null,
         workspaceDigest: null,
@@ -1089,6 +1092,7 @@ export class ExperienceStore {
         tags: null,
         confidence: item.confidence,
         reuseCount: item.reuseCount,
+        source: item.source,
       })
 
       existingIds.add(item.id)

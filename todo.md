@@ -367,3 +367,27 @@
 - `agentTools` Map 加 `lastInjectedIds` 字段，pre-step 注入时记录 selected ids ✓
 - `PendingReflection` 加 `injectedIds`，turn-stopping 入队时传入 ✓
 - run-maintenance 中只 boost `entry.injectedIds` 中的经验，不再 query 相似经验 ✓
+
+---
+
+## 域 K — 第三轮架构评审（2026-08-26）
+
+> 焦点：数据完整性、内存安全、运行时健壮性。
+
+### K1 importExperiences INSERT 语句缺 source/content_hash 列 [P0] [x]
+- ~~INSERT 语句没有写入 source 和 content_hash 列~~ 已修复
+- INSERT 语句加 `source` 和 `content_hash` 列，`insertStmt.run` 传入 `item.source` 和 `item.contentHash`（或重新计算）✓
+
+### K2 agentTaskUnits Map 内存泄漏 [P1] [x]
+- ~~agentTaskUnits 只在 goal advanced 时清理，无 goal 的 task unit 永不清理~~ 已修复
+- turn-stopping 中无 goal 的 task unit 立即清理（`agentTaskUnits.delete`）✓
+- cleanup（`ctx.effect`）中 `agentTools.clear()` + `agentTaskUnits.clear()` 兜底 ✓
+
+### K3 FTS5 searchText 对中文效果差 [P2] [~]
+- searchText 做 sanitize（去标点/特殊字符），但未做中文分词
+- FTS5 `unicode61` 分词器对中文连续文本仍按整段匹配，效果有限
+- fallback 到 score 降序路径仍可用，非阻断性问题
+
+### K4 pre-step 注入的 searchText 含特殊字符 [P2] [x]
+- ~~searchText 直接取用户消息原文，含 FTS5 特殊语法字符~~ 已修复
+- searchText 做 sanitize：去掉 `` `~!@#$%^&*()=[]{}|;:'",.<>/\ `` 等特殊字符，多空格合并，截断 100 字符 ✓

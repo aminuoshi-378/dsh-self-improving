@@ -754,11 +754,15 @@ export function apply(ctx: Context, config: Config): void {
     // Clean up agent tool tracking for next turn
     agentTools.delete(agent.id)
 
-    // P-C: If goal completed, close the task unit
-    if (goalProgress === 'advanced' && entry.goalId) {
-      // Goal advanced/complete — close the task unit
+    // P-C: Close task unit when goal completed, or when there's no goal (per-turn task)
+    if (entry.goalId) {
+      if (goalProgress === 'advanced') {
+        agentTaskUnits.delete(agent.id)
+        log(`task unit ${entry.taskUnitId} closed (goal ${entry.goalId} advanced)`)
+      }
+    } else {
+      // K2: No goal → per-turn task unit, clean up immediately
       agentTaskUnits.delete(agent.id)
-      log(`task unit ${entry.taskUnitId} closed (goal ${entry.goalId} advanced)`)
     }
   })
 
@@ -819,8 +823,15 @@ export function apply(ctx: Context, config: Config): void {
           : ''
         const currentTaskPattern = msgText ? inferTaskPattern(msgText) : null
 
-        // I3: Query with searchText for FTS5+BM25 semantic recall
-        const searchText = msgText ? msgText.slice(0, 100) : undefined
+        // I3/K3/K4: Sanitize searchText for FTS5 — extract keywords, strip special chars
+        const rawSearchText = msgText ? msgText.slice(0, 200) : ''
+        const searchText = rawSearchText
+          ? rawSearchText
+              .replace(/[`~!@#$%^&*()=+\[\]{}|;:'",.<>/?\\]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 100)
+          : undefined
         const records = store.query({
           workspaceDigest: wsDigest,
           limit: 10,
@@ -1127,6 +1138,9 @@ export function apply(ctx: Context, config: Config): void {
 
   // --- Cleanup ---
   ctx.effect(() => () => {
+    // K2: Clean up in-memory maps to prevent memory leak on long-running processes
+    agentTools.clear()
+    agentTaskUnits.clear()
     store.close()
   })
 }
