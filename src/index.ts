@@ -857,6 +857,9 @@ export function apply(ctx: Context, config: Config): void {
     }
     const llmModel = (provider && model) ? { provider, model } : undefined
 
+    // W3: diagnostic — log whether we resolved a provider/model for LLM calls.
+    log(`runMaintenance — llmModel=${llmModel ? llmModel.provider + '/' + llmModel.model : 'NONE'} llmService=${ctx.get?.('llm') ? 'present' : 'MISSING'}`)
+
     if (pendingReflections.length > 0) {
       log(`processing ${pendingReflections.length} pending reflections`)
     }

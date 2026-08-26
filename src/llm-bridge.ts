@@ -31,11 +31,19 @@ export async function tryLLMComplete(
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
+      // W3: build the message with createUserMessage (as dsh's own one-shot LLM
+      // callers do) — a hand-rolled `{ role, content }` object lacks the required
+      // `source` (and `id`) fields and fails inside the adapter. Dynamic import
+      // keeps @deepseek-ai/dsh-llm an optional peer (absent in standalone tests).
+      const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+      const message = createUserMessage({
+        content: [{ type: 'text', text: prompt }],
+        source: { kind: 'plugin', plugin: 'self-improving' },
+      })
       for await (const chunk of llm.stream({
         provider: model.provider,
         model: model.model,
-        // W1: content must be ContentBlock[], not a plain string
-        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        messages: [message],
         signal: controller.signal,
       })) {
         if (chunk?.type === 'text-delta' && chunk.text) {
@@ -48,7 +56,10 @@ export async function tryLLMComplete(
     } finally {
       clearTimeout(timeout)
     }
-  } catch {
+  } catch (err) {
+    // W3: diagnostic — surface the actual failure so LLM bridge issues are visible.
+    const msg = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`[self-improving] tryLLMComplete error: ${msg}\n`)
     // P9: Return partial result if we got some chunks before the error/timeout
     return chunks.length > 0 ? chunks.join('') : null
   }

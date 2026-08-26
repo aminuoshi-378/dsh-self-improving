@@ -734,6 +734,13 @@
   - provider/model 三级 fallback：`agent.options` → `session.requestHeader()` → undefined（rule-based）
   - `dsh-env.d.ts` 的 `Agent.options` 补 `provider`/`model`/`maxTokens`
 
-### W3 待验证：真机 LLM lesson 是否真正生成 [ ]
-- 修复后需重启 dsh 验证：跑任务后查 experiences.db 的 `lesson` 字段，确认不再是 null 或模板套话，而是 LLM 生成的带语义 lesson
-- 若 agent.options 和 requestHeader 都拿不到 provider/model，仍会 fallback 到 rule-based（需进一步查默认模型插件的注入方式）
+### W3 真机诊断：LLM 调用链第三层 bug（message 缺 source 字段）[P0] [x]
+- **诊断日志确认**：`runMaintenance — llmModel=qwen/qwen3.7-flash llmService=present`，说明 provider/model 和 llm 服务都拿到了，但 `tryLLMComplete` 仍返回 null → fallback rule-based
+- **根因**：手写 `{ role:'user', content:[...] }` 消息缺 dsh `Message` 必填的 `source`（和 `id`）字段，`llm.stream()` 内部 adapter 抛异常
+- **参照**：dsh 官方一次性 LLM 调用（`session-title-llm`）用 `createUserMessage({ content, source })` 工厂构造消息
+- **修复**：`tryLLMComplete` 改用动态 `await import('@deepseek-ai/dsh-llm')` + `createUserMessage`（补 source: `{kind:'plugin', plugin:'self-improving'}`）；catch 加诊断日志打印真实错误
+- 动态 import 保持 @deepseek-ai/dsh-llm 为 optional peer（独立测试环境不崩）✓
+
+### W4 待验证：真机 LLM lesson 是否最终生成 [ ]
+- 修复 W3 后需重启 dsh 再验证：lesson 应变为 LLM 生成的带语义内容（非"工具序列 [x → y] gives mixed results"模板）
+- 若仍 fallback，看 `tryLLMComplete error: ...` 诊断日志定位下一层问题
