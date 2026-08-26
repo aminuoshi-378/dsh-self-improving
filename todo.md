@@ -759,3 +759,30 @@
   - 匹配日志那条 `01M0ZAT04TW7M00GYJ4H9JF5EV` 已带完整结构化反思 JSON（`whatWorked`/`whatFailed`/`whatToTryDifferently`）
   - 最新一条（high，37 步，score 0.71）lesson 为语义化反思而非套话 → lesson 可被后续注入复用
 - **附带修复**（解锁 W5 的硬前置）：`~/.dsh/experiences.db` 路径的 `~` 用 `process.env.HOME` 展开在 Windows 失效（HOME=undefined），ExperienceStore 初始化即抛"directory does not exist"。已改为 `process.env.HOME || homedir()`（`experience-store.ts`），同类问题一并修复 `preference-extractor.ts` 的 preferences 路径 ✓
+
+---
+
+## 域 Z — 待查：WebUI 导出经验为空（2026-08-26）
+
+> 状态：**已诊断、未修复**（用户要求先只记录）。现象：Web 设置 Experiences 面板点 Export 下载的空数组 `[]`，但 experiences.db 里确有 2 条带 lesson 记录。
+
+### Z1 后端链路现状（已确认正常）[ ]
+- `store.exportAll()`（`experience-store.ts:1081`）全量 `SELECT * FROM experiences`，返回所有记录 —— 无过滤，**非空**
+- host bridge（`index.ts:965-1009`）：`settingsService.register('dsh-self-improving-gui', rulesSchema())` → `guiScope.watch((next) => next.exportRequest === 'all')` → `store.exportAll()` → `guiScope.update({ exportData, exportRequest:null })`，日志 `GUI export — sent N records`
+
+### Z2 前端链路现状（已确认）[ ]
+- `gui/client/index.ts:40-52`：`exportAll()` = `scope.set('exportRequest','all')` 后轮询 `getSnapshot().value?.exportData`，≤20×200ms=4s，**超时返回 `[]`**
+- `client/index.ts:28-30`：`scope = ctx.settingsScope.bind({ namespace:'dsh-self-improving-gui' })`
+- **关键分歧**：host 用 `settingsService.register(...).update/watch`，前端用 `settingsScope.bind(...).set/getSnapshot` —— 两者是否共享同一 settings 存储视图，是导出空的最大疑点
+
+### Z3 候选根因（按嫌疑排序，待实证）[ ]
+- **R1 host bridge 未激活**：`(ctx as any).get?.('settings')` 拿不到（settings 未注入或 guard 不进）→ 整个 bridge 跳过 → `exportRequest` 无人处理 → 前端 4s 超时返回 `[]`。代价：stats/import 也全失效。
+- **R2 register vs bind 通道不回写**：host 用 `register().update()` 写 exportData，前端用 `bind().getSnapshot()` 读；若两者非同一视图 → 前端永远读不到 exportData → `[]`。若 stats 正常显示而 export/import 空，则偏向此。
+- **R3 watch 触发不匹配**：前端 set `exportRequest:'all'`，host 判 `=== 'all'`；本应匹配，但若 settings 序列化把字段嵌套/换名则不触发。
+- **R4 竞态/超时**：4s 轮询不够 / update 慢（弱）。
+
+### Z4 待执行的判别步骤（不改代码，只观测，需用户/dsh web 配合）[ ]
+- 启动 dsh web 后看终端是否打印 `GUI settings bridge active`（无 → R1）
+- WebUI 里 Experiences 面板 **stats 是否显示 `Total = 2`**？（空 → 桥接彻底断=R1/R2；正常 → 聚焦 export 专用通道）
+- 点 Export 后终端是否打印 `GUI export — sent 2 records`？（sent 2 但前端仍空 → R2 读侧不通；不打印 → R1/R3）
+- 三者组合可把 R1–R4 收敛到唯一根因，再动手修
