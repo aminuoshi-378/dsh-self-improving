@@ -4,6 +4,7 @@
  */
 
 import type { ExperienceRecord } from './types/index.js'
+import { randomUUID } from 'node:crypto'
 
 /**
  * Try to complete a prompt using ctx.llm. Returns null if LLM is unavailable.
@@ -31,15 +32,20 @@ export async function tryLLMComplete(
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
-      // W3: build the message with createUserMessage (as dsh's own one-shot LLM
-      // callers do) — a hand-rolled `{ role, content }` object lacks the required
-      // `source` (and `id`) fields and fails inside the adapter. Dynamic import
-      // keeps @deepseek-ai/dsh-llm an optional peer (absent in standalone tests).
-      const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
-      const message = createUserMessage({
-        content: [{ type: 'text', text: prompt }],
-        source: { kind: 'plugin', plugin: 'self-improving' },
-      })
+      // W4: build a minimal valid dsh `Message` BY HAND instead of importing
+      // @deepseek-ai/dsh-llm. That package is a nested dependency of the dsh CLI
+      // (dsh/node_modules/@deepseek-ai/dsh-llm), not resolvable from an
+      // out-of-tree link plugin's dist/ directory — so `await import(...)` fails.
+      //
+      // dsh's Message requires `id` (MessageId — a plain string, no runtime
+      // validation) and `source`. `createUserMessage` only adds role='user' and
+      // id=randomUUID(), which we replicate here.
+      const message = {
+        id: randomUUID(),
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: prompt }],
+        source: { kind: 'plugin' as const, plugin: 'self-improving' },
+      }
       for await (const chunk of llm.stream({
         provider: model.provider,
         model: model.model,

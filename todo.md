@@ -741,6 +741,12 @@
 - **修复**：`tryLLMComplete` 改用动态 `await import('@deepseek-ai/dsh-llm')` + `createUserMessage`（补 source: `{kind:'plugin', plugin:'self-improving'}`）；catch 加诊断日志打印真实错误
 - 动态 import 保持 @deepseek-ai/dsh-llm 为 optional peer（独立测试环境不崩）✓
 
-### W4 待验证：真机 LLM lesson 是否最终生成 [ ]
-- 修复 W3 后需重启 dsh 再验证：lesson 应变为 LLM 生成的带语义内容（非"工具序列 [x → y] gives mixed results"模板）
-- 若仍 fallback，看 `tryLLMComplete error: ...` 诊断日志定位下一层问题
+### W4 LLM 调用链第四层 bug：@deepseek-ai/dsh-llm 无法从外部插件解析 [P0] [x]
+- **真机错误**：`tryLLMComplete error: Cannot find package '@deepseek-ai/dsh-llm' imported from dist/llm-bridge.js`
+- **根因**：`@deepseek-ai/dsh-llm` 是 dsh CLI 的嵌套依赖（`dsh/node_modules/@deepseek-ai/dsh-llm`），外部 link 插件从 `dist/` 向上解析 node_modules 找不到它。dsh 内置插件能 import 是因为它们安装在 dsh 的 node_modules 里共享解析链
+- **修复**：不再 import `@deepseek-ai/dsh-llm`，改为手动构造最小合法 dsh `Message`（`id: randomUUID()` + `role:'user'` + `content: ContentBlock[]` + `source`）。`MessageId` 运行时就是普通 string（`return id as MessageId`，无校验），`createUserMessage` 只做 `role='user'` + `id=randomUUID()`，可等价复刻 ✓
+- 保留 catch 诊断日志打印真实错误
+
+### W5 待验证：真机 LLM lesson 是否最终生成 [ ]
+- 修复 W4 后需重启 dsh 再验证：lesson 应变为 LLM 生成的带语义内容
+- 若仍 fallback，看 `tryLLMComplete error: ...` 定位下一层
