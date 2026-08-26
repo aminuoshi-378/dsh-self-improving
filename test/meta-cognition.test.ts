@@ -13,27 +13,24 @@ function assert(condition: boolean, message: string): void {
 let passed = 0
 let failed = 0
 
+const testQueue: Promise<void>[] = []
+
 function test(name: string, fn: () => void | Promise<void>): void {
-  try {
-    const result = fn()
-    if (result instanceof Promise) {
-      result.then(() => {
-        passed++
-        console.log(`  ✓ ${name}`)
-      }).catch((err) => {
-        failed++
-        console.error(`  ✗ ${name}`)
-        console.error(`    ${err.message}`)
-      })
-    } else {
-      passed++
-      console.log(`  ✓ ${name}`)
-    }
-  } catch (err) {
+  const p = Promise.resolve().then(() => fn()).then(() => {
+    passed++
+    console.log(`  ✓ ${name}`)
+  }).catch((err) => {
     failed++
     console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
-  }
+    console.error(`    ${err.message}`)
+  })
+  testQueue.push(p)
+}
+
+async function runAll(): Promise<void> {
+  await Promise.all(testQueue)
+  console.log(`\n${passed} passed, ${failed} failed\n`)
+  if (failed > 0) process.exit(1)
 }
 
 console.log('\n=== Meta-Cognition Engine Tests ===')
@@ -524,4 +521,4 @@ test('reflection prompt includes step count and difficulty', async () => {
   store.close()
 })
 
-console.log(`\n${passed} passed, ${failed} failed\n`)
+runAll()

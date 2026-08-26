@@ -6,7 +6,7 @@
  * Also provides LLM-based preference distillation.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import type { ExperienceStore } from './store/experience-store.js'
 
@@ -71,7 +71,7 @@ export function appendPreference(filePath: string, preference: string): boolean 
     // J5: Atomic write via temp file + rename
     const tmpPath = `${filePath}.tmp.${process.pid}`
     writeFileSync(tmpPath, content, 'utf-8')
-    require('node:fs').renameSync(tmpPath, filePath)
+    renameSync(tmpPath, filePath)
     return true
   } catch {
     return false
@@ -158,7 +158,7 @@ If no high-confidence preferences can be extracted, return an empty array: []`
       // J5: Atomic write
       const tmpPath = `${prefPath}.tmp.${process.pid}`
       writeFileSync(tmpPath, content, 'utf-8')
-      require('node:fs').renameSync(tmpPath, prefPath)
+      renameSync(tmpPath, prefPath)
       added++
     }
     return added

@@ -7,6 +7,44 @@
 
 import type { ExperienceRecord } from './types/index.js'
 
+/**
+ * M1: Normalize a tool entry from the actions JSON.
+ *
+ * Two formats exist in the wild:
+ *   - Runtime (index.ts):            { name: string, success: boolean }
+ *   - OutcomeEvaluator (test class): { tool: string, ok: boolean, ms: number }
+ *
+ * Both must be handled, otherwise lesson generation silently loses tool names
+ * and failed-tool lists (they'd always come back empty).
+ */
+function normalizeToolEntry(t: any): { name: string; ok: boolean } | null {
+  if (!t || typeof t !== 'object') return null
+  const name = t.name ?? t.tool
+  if (typeof name !== 'string' || name.length === 0) return null
+  // `success` (runtime) and `ok` (evaluator) both mean "the call succeeded".
+  const ok = t.success ?? t.ok
+  return { name, ok: ok !== false }
+}
+
+/** M1: Extract tool names and failed tool names from an actions JSON string. */
+function extractToolInfo(actions: string, fallbackTools: string[]): {
+  toolNames: string[]
+  failedTools: string[]
+  guardCount: number
+} {
+  let parsed: any = {}
+  try { parsed = JSON.parse(actions) } catch { /* not JSON — use fallback */ }
+
+  const raw = Array.isArray(parsed.tools) ? parsed.tools : []
+  const normalized = raw.map(normalizeToolEntry).filter(Boolean) as { name: string; ok: boolean }[]
+
+  return {
+    toolNames: normalized.length > 0 ? normalized.map(t => t.name) : fallbackTools,
+    failedTools: normalized.filter(t => !t.ok).map(t => t.name),
+    guardCount: Array.isArray(parsed.guards) ? parsed.guards.length : 0,
+  }
+}
+
 /** I2: Build LLM prompt for lesson generation from turn data. */
 export function buildLessonPrompt(entry: {
   actions: string
@@ -16,10 +54,7 @@ export function buildLessonPrompt(entry: {
   stepCount?: number
   difficulty?: 'low' | 'medium' | 'high'
 }): string {
-  let parsedActions: any = {}
-  try { parsedActions = JSON.parse(entry.actions) } catch {}
-  const toolNames = parsedActions.tools?.map((t: any) => t.tool).filter(Boolean) ?? entry.toolsUsed
-  const failedTools = parsedActions.tools?.filter((t: any) => !t.ok).map((t: any) => t.tool) ?? []
+  const { toolNames, failedTools } = extractToolInfo(entry.actions, entry.toolsUsed)
 
   return `You are a reflection engine. Analyze this agent turn and produce a structured lesson.
 
@@ -53,11 +88,7 @@ export function generateStructuredReflection(entry: {
   whatToTryDifferently: string
   reusableLesson: string
 } {
-  let parsedActions: any = {}
-  try { parsedActions = JSON.parse(entry.actions) } catch {}
-
-  const toolNames = parsedActions.tools?.map((t: any) => t.tool).filter(Boolean) ?? entry.toolsUsed
-  const guardCount = parsedActions.guards?.length ?? 0
+  const { toolNames, failedTools, guardCount } = extractToolInfo(entry.actions, entry.toolsUsed)
   const stepInfo = entry.stepCount ? ` in ${entry.stepCount} steps` : ''
   const diffInfo = entry.difficulty ? ` (difficulty: ${entry.difficulty})` : ''
 
@@ -73,7 +104,6 @@ export function generateStructuredReflection(entry: {
     reusableLesson = `For ${entry.difficulty ?? 'medium'} tasks, [${toolNames.join(' → ')}] is effective${stepInfo}`
   } else if (entry.outcomeScore <= 0.3) {
     whatWorked = 'No clearly successful elements identified'
-    const failedTools = parsedActions.tools?.filter((t: any) => !t.ok).map((t: any) => t.tool) ?? []
     whatFailed = failedTools.length > 0
       ? `Tools [${failedTools.join(', ')}] failed${stepInfo}${diffInfo} (score: ${entry.outcomeScore.toFixed(2)})`
       : `Overall outcome was poor (score: ${entry.outcomeScore.toFixed(2)})${diffInfo}`

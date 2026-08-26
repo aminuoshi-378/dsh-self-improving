@@ -12,6 +12,7 @@ import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { ulid } from 'ulid'
 import { createHash } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import type {
   ExperienceRecord,
   ExperienceQuery,
@@ -42,7 +43,7 @@ export class ExperienceStore {
       : dbPath
     if (resolvedPath !== ':memory:') {
       const dir = resolvedPath.replace(/\/[^/]+$/, '')
-      try { require('node:fs').mkdirSync(dir, { recursive: true }) } catch {}
+      try { mkdirSync(dir, { recursive: true }) } catch {}
     }
     this.db = new Database(resolvedPath)
     this.db.pragma('journal_mode = WAL')

@@ -55,16 +55,16 @@ test/harness/
 
 ```bash
 # 预估 token（不执行）
-npx tsx test/harness-e2e/run.ts --dry-run
+npx tsx test/harness/run.ts --dry-run
 
 # 默认场景（REST API todo app），6 轮
-npx tsx test/harness-e2e/run.ts
+npx tsx test/harness/run.ts
 
 # 自定义场景和轮数
-npx tsx test/harness-e2e/run.ts --scenario "Build a CLI tool for file conversion" --rounds 8
+npx tsx test/harness/run.ts --scenario "Build a CLI tool for file conversion" --rounds 8
 
 # 测试 agent 用不同 model
-npx tsx test/harness-e2e/run.ts --model qwen3.7-plus-2026-05-26 --agent-model qwen3-8b
+npx tsx test/harness/run.ts --model qwen3.7-plus-2026-05-26 --agent-model qwen3-8b
 ```
 
 ## 流程

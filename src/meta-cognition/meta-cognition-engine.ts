@@ -223,7 +223,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   private parseReflectionResponse(response: string): Reflection {
     try {
       // Strip any markdown code fences if present
-      const cleaned = response.replace(/```json?\n?/g, '').replace(/```/g, '').trim()
+      const cleaned = response.replace(/```json\n?/g, '').replace(/```/g, '').trim()
       const parsed = JSON.parse(cleaned)
 
       return {

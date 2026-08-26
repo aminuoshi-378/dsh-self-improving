@@ -18,16 +18,19 @@ export async function tryLLMComplete(ctx: any, prompt: string): Promise<string |
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
 
-    const chunks: string[] = []
-    for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }], signal: controller.signal })) {
-      if (chunk?.type === 'text-delta' && chunk.text) {
-        chunks.push(chunk.text)
-      } else if (typeof chunk === 'string') {
-        chunks.push(chunk)
+    try {
+      const chunks: string[] = []
+      for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }], signal: controller.signal })) {
+        if (chunk?.type === 'text-delta' && chunk.text) {
+          chunks.push(chunk.text)
+        } else if (typeof chunk === 'string') {
+          chunks.push(chunk)
+        }
       }
+      return chunks.length > 0 ? chunks.join('') : null
+    } finally {
+      clearTimeout(timeout)
     }
-    clearTimeout(timeout)
-    return chunks.length > 0 ? chunks.join('') : null
   } catch {
     return null
   }

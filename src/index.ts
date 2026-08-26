@@ -156,6 +156,10 @@ export function apply(ctx: Context, config: Config): void {
     if (difficultyForFilter === 'low' && entry.tools.length <= 2) {
       log(`turn-stopping: low-value turn (P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
       agentTools.delete(agent.id)
+      // M4: Also clean up task unit for no-goal turns to prevent map leak
+      if (!entry.goalId) {
+        agentTaskUnits.delete(agent.id)
+      }
       return
     }
 
