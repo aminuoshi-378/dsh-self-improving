@@ -152,7 +152,7 @@
 - `detectFactConflicts()`：检测同 subject+predicate 不同 object 的冲突 ✓
 - `evictFact(id)`：软删除旧事实（标记 `evicted=1`），保留历史可追溯 ✓
 - `upsertFact()`：同 subject+predicate 存在时更新 object 而非创建重复 ✓
-- 注：主题归一化（同一事实的多种表述可归并）未实现，当前 subject 需精确匹配
+- ~~注：主题归一化（同一事实的多种表述可归并）未实现~~ → 已实现（域 T1：`normalizePredicate`/`normalizeSubject` 谓词别名归并 + subject 规范化）✓
 
 ---
 
@@ -211,7 +211,7 @@
 - 被动观测隐式信号：
   - 用户中断 agent（`turn/end` reason `aborted`）→ `negative`（`index.ts:706-708`）✓
   - 同 turn 内用户追问/纠正（step > 1 且有用户消息）→ `negative`（`index.ts:710-718`）✓
-  - 用户重述任务（与上一条高度相似）→ `negative` — **未实现**（仅检测 step>1，无文本相似度比较）
+  - 用户重述任务（与上一条高度相似）→ `negative` — ~~未实现~~ → 已实现（M4：词重叠相似度 > 0.7 判为重述，`index.ts` D3 分支）✓
   - 无负信号 → `neutral`（0.6）（`index.ts:757`）✓
   - 用户主动点赞 → `positive`（1.0，需 message-feedback 插件）（`index.ts:724-746`）✓
 - 权重：feedback 从 0.2 降到 0.1（`SCORE_WEIGHTS.userFeedback: 0.1`）✓
@@ -442,7 +442,7 @@
   - Layer 4（反思）：turn-stopping 入队 → run-maintenance 处理（LLM 优先 + rule-based fallback）→ lesson 落库 → C5 定期合并 ✓
 - **双向反馈闭环已实现**：注入经验 → 高分时 boost confidence（J7 精确 boost）✓
 - **数据管道已贯通**：原子事实提取（I4）→ 冲突检测（J2）→ systemPrompt 注入（J4）✓
-- **未实现的计划项**：Phase 6 自适应策略调整（agent/request 模型选择、tools/restrict 工具推荐、守卫阈值自适应）— 仍在计划中，未开始
+- ~~未实现的计划项：Phase 6 自适应策略调整~~ → 已落地两项（域 T3）：`agent/request` 模型选择 + `tools/pre-execute` 工具拦截；`repeat-tool-reminder` 守卫阈值属外部插件自身配置，不在本插件职责内
 - **结论**：核心目标（跨会话学习闭环）已实现，L1 编译错误已修复，dist 产物已更新 ✓
 
 ---
@@ -645,10 +645,10 @@
 - ~~A6 的"注"仍写"质量高缩小范围——未实现（仅按数量分档）"，但 M5 已实现 avgScore 动态伸缩~~ 已更新
 - A6 注释改为"质量动态伸缩已实现（M5）"，代码位置更新为 `experience-store.ts:354-368` ✓
 
-### S3 已知未实现项盘点（保留，不属本轮缺陷）[ ]
-- **B2 主题归一化**：~~`detectFactConflicts` 仍要求 subject+predicate 精确字符串匹配~~ → 域 T1 已实现（谓词别名归并 + subject 规范化）
-- **Phase 6 自适应策略调整**：`agent/request` 模型选择、`tools/restrict` 工具推荐、`repeat-tool-reminder` 守卫阈值自适应，三项均未开始（todo 域 L5 已记录）→ 域 T3 已查证：依赖 dsh 外部事件契约，本地无法可靠落地，暂缓
-- **I7 双轨技术债**：`BehaviorAdapter`/`OutcomeEvaluator`/`MetaCognitionEngine` 三个独立类仅作测试 fixture，运行时走 index.ts 内联逻辑，需人工保持同步（历史多轮 N1/O7 均出现双轨分歧 bug）→ 域 T2 已部分消除（评分公式抽为唯一真相源）
+### S3 已知未实现项盘点（已由域 T 全部推进）[x]
+- **B2 主题归一化**：→ 域 T1 已实现（谓词别名归并 + subject 规范化）
+- **Phase 6 自适应策略调整**：→ 域 T3 已落地两项（`agent/request` 模型选择 + `tools/pre-execute` 工具拦截）；`repeat-tool-reminder` 守卫阈值属外部插件自身配置，不在本插件职责
+- **I7 双轨技术债**：→ 域 T2 已消除核心分歧（评分公式抽为唯一真相源）；MetaCognitionEngine rule-based 拷贝保留为低风险 fixture（已记录取舍）
 
 ---
 
