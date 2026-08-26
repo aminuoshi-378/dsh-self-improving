@@ -11,7 +11,7 @@
  * - E2: content_hash dedup
  */
 
-import { ExperienceStore } from '../src/store/experience-store.js'
+import { ExperienceStore, normalizePredicate, normalizeSubject } from '../src/store/experience-store.js'
 import type { TurnOutcome } from '../src/types/index.js'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern } from '../src/types/index.js'
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs'
@@ -474,6 +474,57 @@ test('B2: evictFact resolves conflict — old fact evicted, new remains', () => 
   const facts = store.queryFacts('project:app')
   assert(facts.length === 1, 'should have 1 non-evicted fact')
   assert(facts[0].object === 'vite', 'remaining fact should be vite')
+  store.close()
+})
+
+// ---------------------------------------------------------------------------
+// B2: Topic normalization — variant spellings collapse to one fact
+// ---------------------------------------------------------------------------
+
+console.log('\n--- B2: Topic Normalization ---')
+
+test('B2: normalizePredicate maps aliases to canonical form', () => {
+  assert(normalizePredicate('deploy') === 'deploy-command', '"deploy" → "deploy-command"')
+  assert(normalizePredicate('Deploy_Command') === 'deploy-command', '"Deploy_Command" → "deploy-command"')
+  assert(normalizePredicate('  build-tool  ') === 'build-tool', 'whitespace trimmed')
+  assert(normalizePredicate('task-pattern') === 'task-type', '"task-pattern" alias → "task-type"')
+  assert(normalizePredicate('unknown-predicate') === 'unknown-predicate', 'unknown predicate unchanged')
+})
+
+test('B2: normalizeSubject normalizes workspace prefix', () => {
+  assert(normalizeSubject('Workspace:abc123') === 'workspace:abc123', 'workspace prefix lowercased')
+  assert(normalizeSubject('  project:my-app  ') === 'project:my-app', 'trimmed')
+})
+
+test('B2: upsertFact merges variant predicates into one fact', () => {
+  const store = new ExperienceStore()
+  // Same subject, variant predicate spellings — should merge into one fact
+  const id1 = store.upsertFact('project:app', 'deploy', 'pnpm run deploy')
+  const id2 = store.upsertFact('project:app', 'deploy-command', 'pnpm run deploy')
+  assert(id1 === id2, 'variant predicates should merge to same fact id')
+
+  const facts = store.queryFacts('project:app')
+  assert(facts.length === 1, 'should be a single merged fact')
+  assert(facts[0].predicate === 'deploy-command', 'predicate stored in canonical form')
+  store.close()
+})
+
+test('B2: detectFactConflicts catches cross-spelling conflicts', () => {
+  const store = new ExperienceStore()
+  // Direct insert with variant predicate spellings (bypasses upsert normalization)
+  store.db.prepare(`
+    INSERT INTO atomic_facts (id, subject, predicate, object, source, confidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('id1', 'project:app', 'deploy', 'webpack', 'model-inferred', 0.5, Date.now())
+  store.db.prepare(`
+    INSERT INTO atomic_facts (id, subject, predicate, object, source, confidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('id2', 'project:app', 'deploy-command', 'vite', 'user-confirmed', 0.8, Date.now())
+
+  const conflicts = store.detectFactConflicts()
+  assert(conflicts.length === 1, 'variant predicates should group into 1 conflict')
+  assert(conflicts[0].conflicts.length === 2, 'should have 2 conflicting facts')
+  assert(conflicts[0].conflicts[0].source === 'user-confirmed', 'user-confirmed should rank first')
   store.close()
 })
 

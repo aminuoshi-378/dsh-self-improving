@@ -18,7 +18,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import { ulid } from 'ulid'
-import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern } from './types/index.js'
+import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern, computeOutcomeScore } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome } from './types/index.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
@@ -313,14 +313,14 @@ export function apply(ctx: Context, config: Config): void {
       userFeedback = 'negative'
     }
 
-    // P0+P1: Compute outcome score with new weights
-    // goalProgress: 0.3, toolSuccess: 0.2, stepEfficiency: 0.25, guardPenalty: 0.15, feedback: 0.1
-    const goalScore = goalProgress === 'advanced' ? 1.0 : goalProgress === 'stalled' ? 0.3 : goalProgress === 'regressed' ? 0.0 : 0.5
-    const guardPenalty = Math.min(guardCount * 0.1, 0.15)
-    const feedbackScore = userFeedback === 'positive' ? 1.0 : userFeedback === 'negative' ? 0.0 : 0.6  // P1: neutral = 0.6 (not 0.5)
-    const outcomeScore = Math.max(0, Math.min(1,
-      goalScore * 0.3 + toolSuccessRate * 0.2 + stepEfficiency * 0.25 + (0.15 - guardPenalty) + feedbackScore * 0.1,
-    ))
+    // P0+P1: Compute outcome score via the shared formula (I7: single source of truth)
+    const outcomeScore = computeOutcomeScore({
+      goalProgress,
+      toolSuccessRate,
+      stepEfficiency,
+      guardTriggerCount: guardCount,
+      userFeedback,
+    })
 
     // Store the experience
     const toolsUsed = entry.tools.map(t => t.name)

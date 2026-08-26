@@ -1167,6 +1167,10 @@ export class ExperienceStore {
    * If not, create a new fact.
    */
   upsertFact(subject: string, predicate: string, object: string, source: string = 'model-inferred'): string {
+    // B2: Canonicalize subject/predicate so variants collapse to one fact
+    const norm = normalizeFactKey(subject, predicate)
+    const { subject: cSubject, predicate: cPredicate } = norm
+
     const id = ulid()
     const now = Date.now()
 
@@ -1174,7 +1178,7 @@ export class ExperienceStore {
     const existing = this.db.prepare(`
       SELECT id, confidence FROM atomic_facts
       WHERE subject = @subject AND predicate = @predicate AND evicted = 0
-    `).get({ subject, predicate }) as { id: string; confidence: number } | undefined
+    `).get({ subject: cSubject, predicate: cPredicate }) as { id: string; confidence: number } | undefined
 
     if (existing) {
       // Update: newer fact overrides older, confidence boosted
@@ -1190,7 +1194,7 @@ export class ExperienceStore {
     this.db.prepare(`
       INSERT INTO atomic_facts (id, subject, predicate, object, source, confidence, created_at)
       VALUES (@id, @subject, @predicate, @object, @source, @confidence, @createdAt)
-    `).run({ id, subject, predicate, object, source, confidence: 0.5, createdAt: now })
+    `).run({ id, subject: cSubject, predicate: cPredicate, object, source, confidence: 0.5, createdAt: now })
 
     return id
   }
@@ -1248,29 +1252,40 @@ export class ExperienceStore {
    * Returns groups of conflicting facts.
    */
   detectFactConflicts(): { subject: string; predicate: string; conflicts: AtomicFact[] }[] {
-    const rows = this.db.prepare(`
-      SELECT subject, predicate, COUNT(*) as cnt
-      FROM atomic_facts WHERE evicted = 0
-      GROUP BY subject, predicate
-      HAVING COUNT(DISTINCT object) > 1
-    `).all() as { subject: string; predicate: string; cnt: number }[]
+    // B2: Read all non-evicted facts, then group by canonicalized (subject, predicate).
+    // This catches cross-spelling conflicts that a raw SQL GROUP BY on exact strings
+    // would miss (e.g. "deploy" vs "deploy-command" vs "deploy_command").
+    const allRows = this.db.prepare(`
+      SELECT * FROM atomic_facts WHERE evicted = 0
+    `).all() as RawFactRow[]
 
-    return rows.map(({ subject, predicate }) => {
-      const conflictRows = this.db.prepare(`
-        SELECT * FROM atomic_facts
-        WHERE subject = ? AND predicate = ? AND evicted = 0
-      `).all(subject, predicate) as RawFactRow[]
-      const conflicts = conflictRows.map((r) => this.rowToFact(r))
+    const facts = allRows.map((r) => this.rowToFact(r))
+
+    // Group by canonical (subject, predicate)
+    const groups = new Map<string, AtomicFact[]>()
+    for (const fact of facts) {
+      const key = `${normalizeSubject(fact.subject)}\u0000${normalizePredicate(fact.predicate)}`
+      const list = groups.get(key)
+      if (list) list.push(fact)
+      else groups.set(key, [fact])
+    }
+
+    // Keep only groups with >1 distinct object
+    const conflicts: { subject: string; predicate: string; conflicts: AtomicFact[] }[] = []
+    for (const list of groups.values()) {
+      const distinctObjects = new Set(list.map((f) => f.object))
+      if (distinctObjects.size <= 1) continue
       // B1: Sort by source weight (higher = more authoritative), then confidence.
-      // This is the single authoritative ordering — no SQL ORDER BY above so the
-      // first item is deterministically the highest source-weight fact.
-      conflicts.sort((a, b) => {
+      // The first item is deterministically the highest source-weight fact.
+      list.sort((a, b) => {
         const w = (SOURCE_WEIGHTS[b.source] ?? 0) - (SOURCE_WEIGHTS[a.source] ?? 0)
         if (w !== 0) return w
         return b.confidence - a.confidence
       })
-      return { subject, predicate, conflicts }
-    })
+      conflicts.push({ subject: list[0].subject, predicate: list[0].predicate, conflicts: list })
+    }
+
+    return conflicts
   }
 
   private rowToFact(row: RawFactRow): AtomicFact {
@@ -1342,6 +1357,67 @@ const SOURCE_WEIGHTS: Record<string, number> = {
   'model-inferred': 2,
   'merged': 2,   // P7: Same weight as model-inferred (consolidated but not user-confirmed)
   'chat-mention': 1,
+}
+
+// ---------------------------------------------------------------------------
+// B2: Topic normalization — canonicalize subject/predicate so that the same
+// fact expressed in multiple ways collapses to a single key. This lets
+// upsertFact() merge variants and detectFactConflicts() catch cross-spelling
+// conflicts that exact string matching would miss.
+//
+// Deterministic (no LLM): only handles format variants and a small curated
+// alias table. Semantic paraphrase is intentionally out of scope here.
+// ---------------------------------------------------------------------------
+
+// Predicate aliases — map variant spellings to one canonical predicate.
+const PREDICATE_ALIASES: Record<string, string> = {
+  'deploy-command': 'deploy-command',
+  'deploy': 'deploy-command',
+  'deployment-command': 'deploy-command',
+  'deploy-cmd': 'deploy-command',
+  'build-tool': 'build-tool',
+  'build-command': 'build-tool',
+  'build': 'build-tool',
+  'test-command': 'test-command',
+  'test': 'test-command',
+  'run-tests': 'test-command',
+  'effective-tool-sequence': 'effective-tool-sequence',
+  'effective-tools': 'effective-tool-sequence',
+  'failed-tool-sequence': 'failed-tool-sequence',
+  'failed-tools': 'failed-tool-sequence',
+  'task-type': 'task-type',
+  'task-pattern': 'task-type',
+}
+
+/**
+ * B2: Canonicalize a predicate string.
+ * - Trim + lowercase
+ * - Collapse runs of separators (`-`, `_`, whitespace) into a single `-`
+ * - Map known aliases to a canonical form
+ */
+export function normalizePredicate(predicate: string): string {
+  const folded = predicate.trim().toLowerCase()
+    .replace(/[\s_]+/g, '-')          // underscore / whitespace → hyphen
+    .replace(/-+/g, '-')              // collapse repeated hyphens
+    .replace(/^-|-$/g, '')            // strip leading/trailing hyphens
+  return PREDICATE_ALIASES[folded] ?? folded
+}
+
+/**
+ * B2: Canonicalize a subject string.
+ * - Trim + collapse internal whitespace
+ * - Normalize the common `workspace:` prefix case
+ * - Leave the digest/name body intact (it is already a stable hash or id)
+ */
+export function normalizeSubject(subject: string): string {
+  const trimmed = subject.trim().replace(/\s+/g, ' ')
+  // Normalize a leading "workspace:" / "project:" prefix to lowercase
+  return trimmed.replace(/^(workspace|project):/i, (m) => m.toLowerCase())
+}
+
+/** B2: Canonical key for (subject, predicate) — used for upsert + conflict grouping. */
+function normalizeFactKey(subject: string, predicate: string): { subject: string; predicate: string } {
+  return { subject: normalizeSubject(subject), predicate: normalizePredicate(predicate) }
 }
 
 // A3: Atomic fact types

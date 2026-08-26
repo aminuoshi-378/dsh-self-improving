@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### 推进 — T1-T3 第十二轮：遗留项推进（2026-08-26）
+
+#### T1 — B2 主题归一化 [P1]
+- 新增 `normalizePredicate()` / `normalizeSubject()` 纯函数：谓词别名归并（`deploy`→`deploy-command`、`task-pattern`→`task-type` 等）+ 分隔符折叠 + subject 前缀规范化
+- `upsertFact()` 写入入口应用规范化，变体谓词归并到同一事实
+- `detectFactConflicts()` 改为按规范化 (subject, predicate) 分组，跨拼写冲突可被检测
+- 新增 4 个测试（advanced-features 22→26）
+
+#### T2 — I7 评分公式双轨消除 [P1]
+- 新增 `computeOutcomeScore()` 唯一真相源（`types/index.ts`），封装完整评分公式
+- `index.ts` 运行时与 `OutcomeEvaluator` 都改为调用共享函数，删除 evaluator 内联的三个私有评分方法
+
+#### T3 — Phase 6 自适应策略查证后暂缓 [ ]
+- `agent/request` 存在但需真实签名；`tools/restrict` 事件名在 dsh 文档中不存在；`repeat-tool-reminder` 是外部插件
+- 三项均依赖 dsh 外部事件/插件契约，本地无法可靠自测落地，暂缓待 dsh 环境验证
+
 ### 修复 — S1-S3 第十一轮代码审查修复（2026-08-26）
 
 #### S1 — detectFactConflicts 冗余 SQL 排序 [P3]

@@ -646,6 +646,35 @@
 - A6 注释改为"质量动态伸缩已实现（M5）"，代码位置更新为 `experience-store.ts:354-368` ✓
 
 ### S3 已知未实现项盘点（保留，不属本轮缺陷）[ ]
-- **B2 主题归一化**：`detectFactConflicts` 仍要求 subject+predicate 精确字符串匹配，同一事实的多种表述（如 workspace digest 差异、命令别名）不会归并，导致冲突漏报 + 原子事实表碎片化（todo 域 B2 已记录）
-- **Phase 6 自适应策略调整**：`agent/request` 模型选择、`tools/restrict` 工具推荐、`repeat-tool-reminder` 守卫阈值自适应，三项均未开始（todo 域 L5 已记录）
-- **I7 双轨技术债**：`BehaviorAdapter`/`OutcomeEvaluator`/`MetaCognitionEngine` 三个独立类仅作测试 fixture，运行时走 index.ts 内联逻辑，需人工保持同步（历史多轮 N1/O7 均出现双轨分歧 bug）
+- **B2 主题归一化**：~~`detectFactConflicts` 仍要求 subject+predicate 精确字符串匹配~~ → 域 T1 已实现（谓词别名归并 + subject 规范化）
+- **Phase 6 自适应策略调整**：`agent/request` 模型选择、`tools/restrict` 工具推荐、`repeat-tool-reminder` 守卫阈值自适应，三项均未开始（todo 域 L5 已记录）→ 域 T3 已查证：依赖 dsh 外部事件契约，本地无法可靠落地，暂缓
+- **I7 双轨技术债**：`BehaviorAdapter`/`OutcomeEvaluator`/`MetaCognitionEngine` 三个独立类仅作测试 fixture，运行时走 index.ts 内联逻辑，需人工保持同步（历史多轮 N1/O7 均出现双轨分歧 bug）→ 域 T2 已部分消除（评分公式抽为唯一真相源）
+
+---
+
+## 域 T — 第十二轮：遗留项推进（2026-08-26）
+
+> 焦点：推进 S3 盘点的三项遗留项。
+
+### T1 B2 主题归一化 [P1] [x]
+- ~~同一事实的多种表述（谓词别名、大小写、分隔符变体）不会归并，冲突漏报~~ 已实现
+- 新增 `normalizePredicate()` / `normalizeSubject()` 纯函数（`experience-store.ts`，模块级导出）
+  - 谓词：trim + 小写 + 分隔符（`_`/空白）折叠为 `-` + 高频别名表归并（`deploy`→`deploy-command`、`task-pattern`→`task-type` 等）
+  - subject：trim + 空白折叠 + `workspace:`/`project:` 前缀小写规范化
+- `upsertFact()` 写入入口应用规范化，变体谓词归并到同一事实 ✓
+- `detectFactConflicts()` 改为读全量后按规范化 (subject, predicate) 分组，历史未规范化数据也能归并出跨拼写冲突 ✓
+- 新增 4 个测试：`normalizePredicate`/`normalizeSubject`/`upsertFact 归并`/`detectFactConflicts 跨拼写冲突`（advanced-features 22→26）✓
+
+### T2 I7 评分公式双轨消除 [P1] [x]
+- ~~评分公式在 index.ts（运行时）与 OutcomeEvaluator（fixture）各写一份，历史 O7 出现分歧~~ 已消除
+- 新增 `computeOutcomeScore()` 唯一真相源（`types/index.ts`），封装完整评分公式 + `goalProgressScore()`/`feedbackScore()` 映射
+- `index.ts` 运行时和 `OutcomeEvaluator.evaluate` 都改为调用 `computeOutcomeScore()` ✓
+- 删除 `OutcomeEvaluator` 内联的 `computeScore`/`goalProgressScore`/`feedbackScore` 三个私有方法 ✓
+- 注：`MetaCognitionEngine.ruleBasedReflect` 与 `reflection.ts.generateStructuredReflection` 仍是功能等价的两份拷贝，但二者都是纯 test fixture 内部逻辑、运行时互不影响，分歧风险低，本轮不强行重构（避免破坏 11+11 个测试契约）
+
+### T3 Phase 6 自适应策略 — 查证后暂缓 [ ]
+- **查证结论**（dsh architecture.md）：
+  - `agent/request` 是 waterfall 事件（拦截模型请求），存在但需真实类型签名才能安全接线
+  - `tools/restrict` **事件名在 dsh 文档中不存在**（工具限制走 `tools/pre-execute`/guard 机制），Phase 6 描述的该事件契约存疑
+  - `repeat-tool-reminder` 是**外部插件**，其阈值配置接口不在本插件内
+- **决策**：三项均依赖 dsh 外部事件/插件契约，本地 `@deepseek-ai/*` 包不在 node_modules、无 ambient 声明，无法可靠自测落地 → **暂缓**，待 dsh 运行时环境验证事件签名后再接线

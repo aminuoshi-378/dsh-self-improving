@@ -195,6 +195,60 @@ export function computeDifficulty(
 }
 
 /**
+ * Map a goal progress state to its score component (0.0–1.0).
+ */
+export function goalProgressScore(progress: 'advanced' | 'stalled' | 'regressed' | 'none'): number {
+  switch (progress) {
+    case 'advanced': return 1.0
+    case 'stalled': return 0.3
+    case 'regressed': return 0.0
+    case 'none': return 0.5
+  }
+}
+
+/**
+ * Map a user feedback state to its score component (0.0–1.0).
+ */
+export function feedbackScore(feedback: 'positive' | 'negative' | 'none'): number {
+  switch (feedback) {
+    case 'positive': return 1.0
+    case 'negative': return 0.0
+    case 'none': return 0.6 // P1: neutral = 0.6 (not 0.5)
+  }
+}
+
+/**
+ * I7: Single source of truth for the outcome score formula.
+ *
+ * Previously this formula was duplicated in `index.ts` (runtime) and
+ * `OutcomeEvaluator.computeScore` (test fixture), which drifted apart
+ * (see O7 neutral feedback bug). Consolidating here eliminates the dual-track.
+ *
+ * Weights (SCORE_WEIGHTS): goalProgress 0.3 + toolSuccess 0.2 +
+ * stepEfficiency 0.25 + guardPenalty 0.15 + userFeedback 0.1.
+ */
+export function computeOutcomeScore(input: {
+  goalProgress: 'advanced' | 'stalled' | 'regressed' | 'none'
+  toolSuccessRate: number
+  stepEfficiency: number
+  guardTriggerCount: number
+  userFeedback: 'positive' | 'negative' | 'none'
+}): number {
+  const goalComponent = goalProgressScore(input.goalProgress) * SCORE_WEIGHTS.goalProgress
+  const toolComponent = input.toolSuccessRate * SCORE_WEIGHTS.toolSuccess
+  const efficiencyComponent = input.stepEfficiency * SCORE_WEIGHTS.stepEfficiency
+  const guardPenalty = Math.min(
+    input.guardTriggerCount * GUARD_PENALTY_PER_TRIGGER,
+    SCORE_WEIGHTS.guardPenalty,
+  )
+  const guardComponent = SCORE_WEIGHTS.guardPenalty - guardPenalty
+  const feedbackComponent = feedbackScore(input.userFeedback) * SCORE_WEIGHTS.userFeedback
+
+  const total = goalComponent + toolComponent + efficiencyComponent + guardComponent + feedbackComponent
+  return Math.max(MIN_OUTCOME_SCORE, Math.min(MAX_OUTCOME_SCORE, total))
+}
+
+/**
  * Parse a lesson field that may be JSON (Reflection) or plain text (legacy).
  * Returns the reusable_lesson from JSON, or the raw text if not JSON.
  */
