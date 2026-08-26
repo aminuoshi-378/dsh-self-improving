@@ -88,7 +88,8 @@ export async function distillPreferencesWithLLM(
   ctx: any,
   store: ExperienceStore,
   prefPath: string,
-  tryLLMComplete: (ctx: any, prompt: string) => Promise<string | null>,
+  tryLLMComplete: (ctx: any, prompt: string, model?: { provider: string; model: string }) => Promise<string | null>,
+  model?: { provider: string; model: string },
 ): Promise<number> {
   const stats = store.stats()
   if (stats.total < 20) return 0
@@ -138,7 +139,7 @@ Respond with ONLY valid JSON array, no markdown fences:
 
 If no high-confidence preferences can be extracted, return an empty array: []`
 
-  const response = await tryLLMComplete(ctx, prompt)
+  const response = await tryLLMComplete(ctx, prompt, model)
   if (!response) return 0
 
   try {

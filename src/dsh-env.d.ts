@@ -32,6 +32,9 @@ declare module '@deepseek-ai/dsh-agent' {
     }
     options: {
       cwd?: string
+      provider?: string
+      model?: string
+      maxTokens?: number
     }
   }
 }

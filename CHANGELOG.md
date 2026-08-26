@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### 修复 — W1-W2 lesson 生成链路断裂 [P0]（2026-08-26）
+
+#### W1 — agent/run-maintenance 事件不存在，lesson 从未生成
+- 本插件监听 `ctx.on('agent/run-maintenance')`，但 dsh 无此事件（只有 `Agent.runMaintenance()` 方法），导致 Layer 4（lesson 生成/合并/偏好提炼）从未执行
+- 改为普通函数 `runMaintenance(agent)`，在 `agent/turn-stopping` 里 fire-and-forget 触发
+
+#### W2 — tryLLMComplete 调 LLM 参数错误，LLM 反思必然失败
+- `llm.stream()` 缺必填 `provider`/`model`，且 `content` 传 string 而非 `ContentBlock[]`
+- 修复：`tryLLMComplete` 增加 model 参数、content 改为 ContentBlock[]；provider/model 三级 fallback（agent.options → requestHeader → undefined）
+
 ### 修复 — U1 真机联调：user/message 事件结构不匹配 [P0]（2026-08-26）
 
 #### U1 — task_pattern 恒 null 的根因修复

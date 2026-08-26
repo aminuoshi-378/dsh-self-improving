@@ -495,6 +495,13 @@ export function apply(ctx: Context, config: Config): void {
         difficulty,
         injectedIds: entry.lastInjectedIds, // J7: pass injected ids for precise boost
       })
+
+      // W1: Trigger reflection asynchronously (fire-and-forget) — dsh has no
+      // `agent/run-maintenance` event, so process the queue right after the
+      // turn. Not awaited to avoid blocking turn close.
+      void runMaintenance(agent).catch((err) => {
+        log(`runMaintenance error: ${(err as Error).message}`)
+      })
     }
 
     // Clean up agent tool tracking for next turn
@@ -827,10 +834,29 @@ export function apply(ctx: Context, config: Config): void {
   const MAX_PENDING_REFLECTIONS = 100
   const pendingReflections: PendingReflection[] = []
 
-  // Process reflections during maintenance
+  // Process reflections + periodic maintenance.
   // P2: Generates structured lesson JSON with full Reflection data (P4)
-  // P2: Also merges fragmented lessons periodically
-  ctx.on('agent/run-maintenance', async () => {
+  // P2: Also merges fragmented lessons periodically.
+  //
+  // W1 (fix): dsh has NO `agent/run-maintenance` event — that was an invented
+  // event name that never fired, so lesson generation never ran. This is now a
+  // plain function invoked from `agent/turn-stopping` (which carries the agent,
+  // giving us the provider/model needed for LLM reflection).
+  async function runMaintenance(agent: Agent): Promise<void> {
+    // W1: provider/model for LLM calls. agent.options may be empty (the real
+    // route is resolved per-request); fall back to the session's request header
+    // (the last actually-used provider/model), then give up → rule-based.
+    let provider = agent.options?.provider
+    let model = agent.options?.model
+    if (!provider || !model) {
+      try {
+        const header = (agent.session as any).requestHeader?.()
+        provider = provider || header?.config?.provider
+        model = model || header?.config?.model
+      } catch { /* requestHeader may not be available */ }
+    }
+    const llmModel = (provider && model) ? { provider, model } : undefined
+
     if (pendingReflections.length > 0) {
       log(`processing ${pendingReflections.length} pending reflections`)
     }
@@ -839,7 +865,7 @@ export function apply(ctx: Context, config: Config): void {
 
       // I2: Try LLM lesson generation first, fall back to rule-based
       let reflection = generateStructuredReflection(entry)
-      const llmResponse = await tryLLMComplete(ctx, buildLessonPrompt(entry))
+      const llmResponse = await tryLLMComplete(ctx, buildLessonPrompt(entry), llmModel)
       if (llmResponse) {
         try {
           const clean = llmResponse.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
@@ -898,7 +924,7 @@ export function apply(ctx: Context, config: Config): void {
         for (const group of groups) {
           if (group.records.length < 2) continue
           // C5: Try LLM merge first, fall back to rule-based
-          const mergedLesson = await llmMergeLessons(ctx, group.records, mergeLessonsRuleBased)
+          const mergedLesson = await llmMergeLessons(ctx, group.records, mergeLessonsRuleBased, llmModel)
           const sourceIds = group.records.map(r => r.id)
           const tools = group.records[0].toolsUsed ?? []
           store.mergeLessons(sourceIds, mergedLesson, group.records[0].difficulty as any, tools)
@@ -913,7 +939,7 @@ export function apply(ctx: Context, config: Config): void {
     // Runs periodically during maintenance to extract high-confidence preferences
     try {
       const prefPath = getPreferencesFilePath((config as any).dshHome || undefined)
-      const newPrefs = await distillPreferencesWithLLM(ctx, store, prefPath, tryLLMComplete)
+      const newPrefs = await distillPreferencesWithLLM(ctx, store, prefPath, tryLLMComplete, llmModel)
       if (newPrefs > 0) {
         log(`A1-b: distilled ${newPrefs} new auto-preferences`)
       }
@@ -926,7 +952,7 @@ export function apply(ctx: Context, config: Config): void {
     if (stats.total > 0) {
       log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positiveCount} withLessons=${stats.withLessons} youngGen=${stats.youngGenCount} oldGen=${stats.oldGenCount} highDiff=${stats.highDifficultyCount} merged=${stats.mergedCount}`)
     }
-  })
+  }
 
   // --- P5: GUI Settings Bridge ---
   // The dsh-self-improving-gui client plugin reads/writes through settingsScope

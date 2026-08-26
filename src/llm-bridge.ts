@@ -8,19 +8,36 @@ import type { ExperienceRecord } from './types/index.js'
 /**
  * Try to complete a prompt using ctx.llm. Returns null if LLM is unavailable.
  * J6: Includes 30s timeout via AbortController.
+ *
+ * W1 (fix): dsh's `GenerateOptions` requires a `provider` and `model` (the
+ * provider selects the adapter), and `messages[].content` is `ContentBlock[]`
+ * (not a plain string). The prior implementation passed only `messages` +
+ * `signal` with a string content, so every call failed and silently fell back
+ * to rule-based reflection — meaning LLM lesson generation never actually ran.
  */
-export async function tryLLMComplete(ctx: any, prompt: string): Promise<string | null> {
+export async function tryLLMComplete(
+  ctx: any,
+  prompt: string,
+  model?: { provider: string; model: string },
+): Promise<string | null> {
   const chunks: string[] = []
   try {
     const llm = ctx.get?.('llm')
     if (!llm || typeof llm.stream !== 'function') return null
+    if (!model?.provider || !model?.model) return null
 
     // J6: Timeout protection — abort after 30s
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
-      for await (const chunk of llm.stream({ messages: [{ role: 'user', content: prompt }], signal: controller.signal })) {
+      for await (const chunk of llm.stream({
+        provider: model.provider,
+        model: model.model,
+        // W1: content must be ContentBlock[], not a plain string
+        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        signal: controller.signal,
+      })) {
         if (chunk?.type === 'text-delta' && chunk.text) {
           chunks.push(chunk.text)
         } else if (typeof chunk === 'string') {
@@ -47,6 +64,7 @@ export async function llmMergeLessons(
   ruleBasedFallback: (records: ExperienceRecord[]) => {
     whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string
   },
+  model?: { provider: string; model: string },
 ): Promise<{ whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string }> {
   const lessons = records.map(r => {
     try {
@@ -67,7 +85,7 @@ Find the common pattern across these lessons and produce a single, more general 
 Respond with ONLY valid JSON, no markdown fences:
 {"whatWorked":"merged description","whatFailed":"merged description","whatToTryDifferently":"suggestion","reusableLesson":"consolidated actionable lesson under 50 words"}`
 
-  const response = await tryLLMComplete(ctx, prompt)
+  const response = await tryLLMComplete(ctx, prompt, model)
   if (response) {
     try {
       const clean = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')

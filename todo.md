@@ -713,3 +713,27 @@
 
 ### U2 lesson=null 说明 [ ]
 - 真机最新记录 `lesson=null` 属**预期行为**：lesson 生成依赖 `run-maintenance`（空闲时触发），非 turn-stopping 同步生成；需再跑一个任务或等待 maintenance 触发才会落 lesson（非 bug）
+
+---
+
+## 域 W — 真机深挖：lesson 从未生成的根因（2026-08-26）
+
+> 焦点：用户质疑"工具序列注入没实质作用"，深挖发现 LLM 反思链路整体断裂。
+
+### W1 agent/run-maintenance 事件不存在（lesson 生成从未执行）[P0] [x]
+- **发现**：本插件监听 `ctx.on('agent/run-maintenance', ...)`，但 dsh 里**根本没有这个事件**（全仓搜索只在 dsh 内置 self-improving 自身出现该字符串）。dsh 只有 `Agent.runMaintenance(task)` 实例方法，非 Cordis 事件
+- **后果**：Layer 4（lesson 生成 + lesson 合并 + LLM 偏好提炼）**从未执行**，lesson 恒 null，插件退化成"记录工具名序列"的简单数据库
+- **修复**：把 run-maintenance 逻辑抽成 `runMaintenance(agent)` 普通函数，在 `agent/turn-stopping`（有 agent 上下文）里 fire-and-forget 调用，替代不存在的事件 ✓
+
+### W2 tryLLMComplete 调 LLM 参数错误 [P0] [x]
+- **发现**：`llm.stream({ messages: [{ role:'user', content: prompt }], signal })` 缺必填 `provider`/`model`（dsh `GenerateOptions` 必填，注释明说 "provider selects the adapter"），且 `content` 传 string 而非 `ContentBlock[]`
+- **后果**：即使 lesson 生成被触发，LLM 反思也必然失败，永远 fallback 到 rule-based 模板（"工具序列 [x → y] 高效完成"这种无语义套话）
+- **修复**：
+  - `tryLLMComplete` 增加 `model` 参数，`content` 改为 `[{ type:'text', text: prompt }]`
+  - `llmMergeLessons`/`distillPreferencesWithLLM` 透传 model
+  - provider/model 三级 fallback：`agent.options` → `session.requestHeader()` → undefined（rule-based）
+  - `dsh-env.d.ts` 的 `Agent.options` 补 `provider`/`model`/`maxTokens`
+
+### W3 待验证：真机 LLM lesson 是否真正生成 [ ]
+- 修复后需重启 dsh 验证：跑任务后查 experiences.db 的 `lesson` 字段，确认不再是 null 或模板套话，而是 LLM 生成的带语义 lesson
+- 若 agent.options 和 requestHeader 都拿不到 provider/model，仍会 fallback 到 rule-based（需进一步查默认模型插件的注入方式）
