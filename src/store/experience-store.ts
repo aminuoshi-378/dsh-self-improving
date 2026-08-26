@@ -13,6 +13,7 @@ import type { Database as DatabaseType } from 'better-sqlite3'
 import { ulid } from 'ulid'
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type {
   ExperienceRecord,
   ExperienceQuery,
@@ -39,8 +40,9 @@ export class ExperienceStore {
   private storeCountSinceGC = 0
 
   constructor(dbPath: string = ':memory:') {
+    const homeDir = process.env.HOME || homedir()
     const resolvedPath = dbPath.startsWith('~/')
-      ? dbPath.replace('~/', `${process.env.HOME}/`)
+      ? dbPath.replace('~/', `${homeDir}/`)
       : dbPath
     if (resolvedPath !== ':memory:') {
       const dir = resolvedPath.replace(/\/[^/]+$/, '')

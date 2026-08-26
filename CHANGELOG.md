@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+### 修复 — Windows `~` 路径展开失效 [P0]（2026-08-26）
+- `~/.dsh/experiences.db` 的 `~` 用 `process.env.HOME` 展开，但 Windows 下 `HOME` 为 `undefined`，路径变成 `undefined/.dsh/experiences.db`，`ExperienceStore` 初始化即抛 `directory does not exist`，插件整体无法加载
+- `experience-store.ts` / `preference-extractor.ts` 改为 `process.env.HOME || homedir()`（`node:os`）跨平台取主目录
+- 附带解锁：真机 W5 lesson 验证依赖此修复才能建库、写经验
+
+### 修复 — W3-W5 真机 LLM lesson 生成链路打通并验证 [P0]（2026-08-26）
+
+#### W3 — 手写 Message 缺 source 字段，LLM 反思必失败
+- `tryLLMComplete` 手写 `{ role:'user', content:[...] }` 缺 dsh `Message` 必填的 `source`/`id`，`llm.stream()` 内部 adapter 抛异常，永远 fallback rule-based
+- 改用 `createUserMessage` 工厂（动态 import `@deepseek-ai/dsh-llm`）构造消息
+
+#### W4 — `@deepseek-ai/dsh-llm` 无法从外部 link 插件解析
+- 该包是 dsh CLI 的嵌套依赖，外部 link 插件从 `dist/` 向上解析 node_modules 找不到它，报 `Cannot find package '@deepseek-ai/dsh-llm'`
+- 改为手动构造最小合法 dsh `Message`（`id: randomUUID()` + `role:'user'` + `content: ContentBlock[]` + `source`），等价复刻 `createUserMessage`
+
+#### W5 — 真机验证通过：LLM lesson 生成并落库
+- **日志层**：`tryLLMComplete stream: sawChunk=true ... textLen=726 finish={kind:"stop"}` → LLM 流式成功；`lesson generated (LLM) — "For multi-step tool chains, confirm success by verifying the final output meets the core goal, ..."` → 生成带语义 lesson
+- **数据库层**：直查 `~/.dsh/experiences.db`，`total = 2, with_lesson = 2`，两条经验均带结构化反思 JSON，E2 去重正常
+- lesson 从 rule-based 套话升级为 LLM 生成的、可被后续注入复用的语义反思
+
+### 新增 — GUI 插件独立 pnpm workspace（2026-08-26）
+- `gui/` 被根 workspace（`packages: []`）绑定，pnpm 依赖解析强行拉取不可用的 `@deepseek-ai/*` 内部包导致构建失败
+- 新增 `gui/pnpm-workspace.yaml`（`packages: ['.']`），`gui/` 成为独立 workspace，仅装自身 devDeps（react/tsdown/typescript），构建产物 `lib/index.mjs` + `lib/client.js`
+
 ### 修复 — W1-W2 lesson 生成链路断裂 [P0]（2026-08-26）
 
 #### W1 — agent/run-maintenance 事件不存在，lesson 从未生成

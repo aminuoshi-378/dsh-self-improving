@@ -7,12 +7,13 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import type { ExperienceStore } from './store/experience-store.js'
 
 /** Resolve preferences file path from config or DSH_HOME. */
 export function getPreferencesFilePath(dshHome?: string): string {
-  const home = dshHome || process.env.DSH_HOME || `${process.env.HOME}/.dsh`
+  const home = dshHome || process.env.DSH_HOME || join(homedir(), '.dsh')
   return join(home, 'preferences.md')
 }
 

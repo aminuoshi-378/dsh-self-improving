@@ -747,6 +747,15 @@
 - **修复**：不再 import `@deepseek-ai/dsh-llm`，改为手动构造最小合法 dsh `Message`（`id: randomUUID()` + `role:'user'` + `content: ContentBlock[]` + `source`）。`MessageId` 运行时就是普通 string（`return id as MessageId`，无校验），`createUserMessage` 只做 `role='user'` + `id=randomUUID()`，可等价复刻 ✓
 - 保留 catch 诊断日志打印真实错误
 
-### W5 待验证：真机 LLM lesson 是否最终生成 [ ]
-- 修复 W4 后需重启 dsh 再验证：lesson 应变为 LLM 生成的带语义内容
-- 若仍 fallback，看 `tryLLMComplete error: ...` 定位下一层
+### W5 真机 LLM lesson 验证 [x]
+- ~~修复 W4 后需重启 dsh 再验证：lesson 应变为 LLM 生成的带语义内容~~ 已验证通过
+- **验证日志**（真机，2026-08-26）：
+  - `runMaintenance — llmModel=... llmService=present` → provider/model/llm 均就绪
+  - `tryLLMComplete stream: sawChunk=true types=[block-start,text-delta,block-end,usage,finish] textLen=726 finish={kind:"stop"}` → LLM 流式成功返回 726 字符
+  - `lesson generated (LLM) — "For multi-step tool chains, confirm success by verifying the final output meets the core goal, not just by checking for tool errors."` → 生成**带语义**的 LLM lesson（非 rule-based 套话）
+  - `store stats — withLessons=1` → lesson 已落库，E2 去重正常（单条无重复）
+- **数据库层确认**（直查 `C:\Users\XH\.dsh\experiences.db`，2026-08-26）：
+  - `total = 2, with_lesson = 2` → 两条经验均带 lesson，全部持久化成功
+  - 匹配日志那条 `01M0ZAT04TW7M00GYJ4H9JF5EV` 已带完整结构化反思 JSON（`whatWorked`/`whatFailed`/`whatToTryDifferently`）
+  - 最新一条（high，37 步，score 0.71）lesson 为语义化反思而非套话 → lesson 可被后续注入复用
+- **附带修复**（解锁 W5 的硬前置）：`~/.dsh/experiences.db` 路径的 `~` 用 `process.env.HOME` 展开在 Windows 失效（HOME=undefined），ExperienceStore 初始化即抛"directory does not exist"。已改为 `process.env.HOME || homedir()`（`experience-store.ts`），同类问题一并修复 `preference-extractor.ts` 的 preferences 路径 ✓
