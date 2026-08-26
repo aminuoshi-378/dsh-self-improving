@@ -18,9 +18,16 @@
 - 新增 `computeOutcomeScore()` 唯一真相源（`types/index.ts`），封装完整评分公式
 - `index.ts` 运行时与 `OutcomeEvaluator` 都改为调用共享函数，删除 evaluator 内联的三个私有评分方法
 
-#### T3 — Phase 6 自适应策略查证后暂缓 [ ]
-- `agent/request` 存在但需真实签名；`tools/restrict` 事件名在 dsh 文档中不存在；`repeat-tool-reminder` 是外部插件
-- 三项均依赖 dsh 外部事件/插件契约，本地无法可靠自测落地，暂缓待 dsh 环境验证
+#### T3 — Phase 6 自适应策略（模型选择 + 工具限制）[P1]
+- 查证 `../deepseek-harness` 源码确认真实契约：`agent/request`（waterfall，`LlmCallConfig`）、`tools/pre-execute`（waterfall，`PreToolDecision`）
+- 新增 `selectModel()` 纯函数 + `taskPatternStats()`，按 taskPattern 历史平均分推荐模型，接入 `agent/request`
+- 新增 `guardTool()` 纯函数 + `failedToolCounts()`，工具在多个失败经验中出现则 deny，接入 `tools/pre-execute`
+- 新增 5 个 opt-in 配置项（默认关闭），新增 11 个测试（85→96）
+
+#### T4 — 发现 I4 原子事实 failed-tool-sequence 覆盖 bug [P1]
+- I4 写入 `upsertFact(subject, 'failed-tool-sequence', ...)` 同一 workspace 下不同工具序列互相覆盖，只保留最后一条
+- 影响 J4 注入（永远只有 1 条）+ 冲突检测（无法检测多序列差异）
+- 根因：原子事实表单真值语义 vs failed-tool-sequence 多值语义冲突，待单独修复
 
 ### 修复 — S1-S3 第十一轮代码审查修复（2026-08-26）
 

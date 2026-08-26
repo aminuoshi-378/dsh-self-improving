@@ -100,6 +100,12 @@ stderr 会输出：
     metaCognitionEnabled: true        # 是否开启反思（提取经验教训）
     behaviorAdapterEnabled: true       # 是否开启经验注入
     minInjectionScore: 0.3             # 只注入评分 >= 0.3 的经验
+    # Phase 6 自适应策略（可选，默认关闭）
+    adaptiveModelEnabled: false        # 是否开启按任务类型历史成功率切换模型
+    strongModel: ''                    # 强推理模型 id（如 deepseek-reasoner），为空则不切换
+    standardModel: ''                  # 标准模型 id（如 deepseek-chat）
+    adaptiveToolGuardEnabled: false    # 是否开启基于历史失败的工具拦截
+    failedToolDenyThreshold: 3         # 工具在 N 个失败经验中出现则拦截
 ```
 
 #### 内置策略（无需配置，自动生效）
@@ -114,6 +120,8 @@ stderr 会输出：
 - **P4 两阶段召回**：粗筛（SQL）+ 精筛（综合评分排序）
 - **P5 任务类型分类**：自动从用户消息推断任务类型（bugfix/feature/refactoring/search/test-writing），同类经验优先注入
 - **P5 WebUI 经验库可视化**：安装 GUI 插件后在 Settings → Plugins → Experiences 查看统计、导入/导出经验
+- **Phase 6 自适应模型选择**（需配置 `adaptiveModelEnabled` + `strongModel`）：按任务类型历史平均分在标准/强推理模型间切换
+- **Phase 6 自适应工具拦截**（需配置 `adaptiveToolGuardEnabled`）：工具在多个失败经验中反复出现时自动拦截，建议改用其他工具
 
 ### 安装 WebUI 经验库面板（可选）
 
@@ -135,7 +143,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-self-improving-gui-0.1.0.tgz
 ```bash
 cd dsh-self-improving
 pnpm install          # 安装依赖
-pnpm test             # 跑 85 个单元测试（6 个测试文件）
+pnpm test             # 跑 96 个单元测试（7 个测试文件）
 pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
 ```
 
@@ -148,6 +156,7 @@ pnpm run test:adapter    # 行为适配器（11 个）
 pnpm run test:meta       # 元认知引擎（11 个）
 pnpm run test:memory     # 记忆能力 benchmark（15 个）
 pnpm run test:advanced   # 高级特性 A1-B2（26 个）
+pnpm run test:adaptive   # 自适应策略 Phase 6（11 个）
 ```
 
 ---

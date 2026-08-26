@@ -579,6 +579,66 @@ export class ExperienceStore {
     }
   }
 
+  /**
+   * Phase 6-1: Aggregate outcome statistics for a task pattern, WITHOUT the
+   * E2 content-hash deduplication used for injection. Model selection needs the
+   * full sample (every historical attempt) to estimate success rate, not the
+   * deduplicated "best per tool sequence" projection.
+   *
+   * @param taskPattern - the task type to aggregate, or undefined for all.
+   */
+  taskPatternStats(taskPattern?: string): { count: number; avgScore: number } {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) as count,
+        COALESCE(AVG(outcome_score), 0) as avgScore
+      FROM experiences
+      WHERE merged = 0
+        AND (@taskPattern IS NULL OR task_pattern = @taskPattern OR task_pattern IS NULL)
+    `).get({ taskPattern: taskPattern ?? null }) as { count: number; avgScore: number }
+
+    return { count: row.count, avgScore: row.avgScore ?? 0 }
+  }
+
+  /**
+   * Phase 6-2: Count how many distinct failed experiences used each tool name.
+   *
+   * Reads experiences with `outcome_score <= 0.3` (the "failed outcome" band),
+   * parses their `tools_used` JSON, and counts each tool's occurrences across
+   * distinct failed experiences. Used by `guardTool` to decide whether a tool
+   * has failed often enough to warrant denying it.
+   *
+   * @param minFailures - return only tools that failed at least this many times.
+   * @returns map of tool name → number of distinct failed experiences containing it.
+   */
+  failedToolCounts(minFailures: number = 1): Map<string, number> {
+    const rows = this.db.prepare(`
+      SELECT tools_used FROM experiences
+      WHERE merged = 0 AND outcome_score <= 0.3 AND tools_used IS NOT NULL
+    `).all() as { tools_used: string }[]
+
+    const counts = new Map<string, number>()
+    for (const row of rows) {
+      let tools: string[] = []
+      try {
+        const parsed = JSON.parse(row.tools_used)
+        if (Array.isArray(parsed)) tools = parsed.filter((t): t is string => typeof t === 'string')
+      } catch { /* malformed tools_used — skip */ }
+
+      // Count each distinct tool once per failed experience
+      for (const tool of new Set(tools)) {
+        counts.set(tool, (counts.get(tool) ?? 0) + 1)
+      }
+    }
+
+    // Drop tools below the failure threshold
+    for (const [tool, count] of counts) {
+      if (count < minFailures) counts.delete(tool)
+    }
+
+    return counts
+  }
+
   // -------------------------------------------------------------------------
   // Eviction
   // -------------------------------------------------------------------------

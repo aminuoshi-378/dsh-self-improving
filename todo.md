@@ -672,9 +672,22 @@
 - 删除 `OutcomeEvaluator` 内联的 `computeScore`/`goalProgressScore`/`feedbackScore` 三个私有方法 ✓
 - 注：`MetaCognitionEngine.ruleBasedReflect` 与 `reflection.ts.generateStructuredReflection` 仍是功能等价的两份拷贝，但二者都是纯 test fixture 内部逻辑、运行时互不影响，分歧风险低，本轮不强行重构（避免破坏 11+11 个测试契约）
 
-### T3 Phase 6 自适应策略 — 查证后暂缓 [ ]
-- **查证结论**（dsh architecture.md）：
-  - `agent/request` 是 waterfall 事件（拦截模型请求），存在但需真实类型签名才能安全接线
-  - `tools/restrict` **事件名在 dsh 文档中不存在**（工具限制走 `tools/pre-execute`/guard 机制），Phase 6 描述的该事件契约存疑
-  - `repeat-tool-reminder` 是**外部插件**，其阈值配置接口不在本插件内
-- **决策**：三项均依赖 dsh 外部事件/插件契约，本地 `@deepseek-ai/*` 包不在 node_modules、无 ambient 声明，无法可靠自测落地 → **暂缓**，待 dsh 运行时环境验证事件签名后再接线
+### T3 Phase 6 自适应策略 — 已落地两项（基于 dsh 源码查证）[x]
+- **查证**（`../deepseek-harness` 源码）：
+  - `agent/request`（`packages/core/agent/src/runtime-types.ts:244`）：waterfall，`next()` 返回 `LlmCallConfig`（`{provider, model, reasoningEffort?, temperature?, maxTokens?, stop?}`），返回替换 config 即可切换模型
+  - `tools/restrict` **不存在**；真实工具拦截是 `tools/pre-execute`（`packages/core/tools/src/index.ts:152`），`next()` 返回 `PreToolDecision`（`{kind:'allow'}`/`{kind:'deny';reason}`/`{kind:'ask';reason?}`）
+  - `repeat-tool-reminder`（`packages/guard/repeat-tool-reminder`）是独立 guard 插件，`thresholds:[3,5,8]` 配置属其自身，本插件不接管
+- **T3-a 模型选择**（`agent/request`）已实现：
+  - 新增 `selectModel()` 纯函数（`src/adaptive-strategy.ts`）+ `taskPatternStats()`（`experience-store.ts`，SQL 直接统计、不做 E2 去重）
+  - 按 taskPattern 历史平均分推荐 strong/standard 模型，接入 `agent/request` 事件
+- **T3-b 工具限制**（`tools/pre-execute`）已实现：
+  - 新增 `guardTool()` 纯函数 + `failedToolCounts()`（统计失败经验中每个工具名出现次数）
+  - 工具在 ≥ `failedToolDenyThreshold` 个失败经验中出现则 deny，接入 `tools/pre-execute` 事件
+- 新增 5 个配置项（均 opt-in，默认关闭，行为不变）：`adaptiveModelEnabled`/`strongModel`/`standardModel`/`adaptiveToolGuardEnabled`/`failedToolDenyThreshold`
+- 新增 11 个测试（`test/adaptive-strategy.test.ts`），测试总数 85→96 ✓
+
+### T4 I4 原子事实 failed-tool-sequence 覆盖 bug [P1] [ ]
+- **发现**（Phase 6-2 调试暴露）：I4 写入 `upsertFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), ...)`，同一 workspace 下 subject+predicate 固定，不同工具序列的 object 互相覆盖，最终只保留最后一条
+- **影响**：J4 的 systemPrompt 注入 effective/failed tool sequence 永远只有 1 条（其余被覆盖）；`detectFactConflicts` 无法检测同一 workspace 下多个失败序列的差异
+- **根因**：原子事实表设计为 `(subject, predicate, object)` 单真值语义，但 failed-tool-sequence 是多值语义（一个 workspace 有多个失败序列），二者冲突
+- **未修复**：Phase 6-2 已改用 `experiences` 表 `failedToolCounts()` 绕过该 bug（统计更直接正确），但原子事实表本身的语义缺陷仍需单独修复（需重新设计 failed-tool-sequence 的键，如 predicate 编码工具序列）

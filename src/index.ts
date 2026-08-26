@@ -24,6 +24,7 @@ import type { TurnOutcome } from './types/index.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
 import { tryLLMComplete, llmMergeLessons } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
+import { selectModel, guardTool } from './adaptive-strategy.js'
 
 export const name = 'self-improving'
 
@@ -42,6 +43,12 @@ export interface Config {
   metaCognitionEnabled: boolean
   behaviorAdapterEnabled: boolean
   minInjectionScore: number
+  // Phase 6: adaptive strategy
+  adaptiveModelEnabled: boolean
+  strongModel: string
+  standardModel: string
+  adaptiveToolGuardEnabled: boolean
+  failedToolDenyThreshold: number
 }
 
 export function rulesSchema() {
@@ -53,6 +60,12 @@ export function rulesSchema() {
       metaCognitionEnabled: { type: 'boolean', default: true },
       behaviorAdapterEnabled: { type: 'boolean', default: true },
       minInjectionScore: { type: 'number', default: 0.3 },
+      // Phase 6: adaptive strategy (all opt-in; defaults keep behavior unchanged)
+      adaptiveModelEnabled: { type: 'boolean', default: false },
+      strongModel: { type: 'string', default: '' },
+      standardModel: { type: 'string', default: '' },
+      adaptiveToolGuardEnabled: { type: 'boolean', default: false },
+      failedToolDenyThreshold: { type: 'number', default: 3 },
     },
   }
 }
@@ -635,6 +648,67 @@ export function apply(ctx: Context, config: Config): void {
         log(`pre-step injection error: ${(err as Error).message}`)
         return decision
       }
+    })
+  }
+
+  // --- Phase 6-1: Adaptive model selection via agent/request ---
+  // Waterfall: call next() to get the machine's config, then override the model
+  // when historical outcomes for this task type warrant a stronger/standard model.
+  if (config.adaptiveModelEnabled && config.strongModel) {
+    ctx.on('agent/request', async (
+      payload: { agent: Agent; turn: number; step: number; signal: AbortSignal },
+      next: () => Promise<{ provider: string; model: string; [k: string]: unknown }>,
+    ) => {
+      const resolved = await next()
+      try {
+        // Infer task pattern from the agent's session (best-effort, same as pre-step)
+        let taskPattern: string | null = null
+        try {
+          const events = payload.agent.session.events ?? []
+          const firstMsg = events.find((e: any) => e.type === 'user/message')
+          let msgText = ''
+          const raw = firstMsg?.data?.text ?? firstMsg?.data?.content ?? ''
+          if (typeof raw === 'string') msgText = raw
+          else if (Array.isArray(raw)) {
+            msgText = raw
+              .filter((p: any) => typeof p === 'string' || (p?.type === 'text' && typeof p.text === 'string'))
+              .map((p: any) => typeof p === 'string' ? p : p.text)
+              .join(' ')
+          }
+          if (msgText) taskPattern = inferTaskPattern(msgText)
+        } catch { /* ignore */ }
+
+        const suggestion = selectModel(taskPattern, store, config.strongModel, config.standardModel)
+        if (suggestion && suggestion.model !== resolved.model) {
+          log(`Phase 6-1: switching model for "${taskPattern ?? 'general'}" → ${suggestion.model} (${suggestion.reason})`)
+          return { ...resolved, model: suggestion.model }
+        }
+      } catch (err) {
+        log(`agent/request adaptive model error: ${(err as Error).message}`)
+      }
+      return resolved
+    })
+  }
+
+  // --- Phase 6-2: Adaptive tool guard via tools/pre-execute ---
+  // Waterfall: call next() first; when the policy denies a tool, return a deny
+  // decision instead of delegating the allow result.
+  if (config.adaptiveToolGuardEnabled && config.failedToolDenyThreshold > 0) {
+    ctx.on('tools/pre-execute', async (
+      exec: { name: string; [k: string]: unknown },
+      next: () => Promise<{ kind: string; reason?: string }>,
+    ) => {
+      const resolved = await next()
+      try {
+        const decision = guardTool(exec.name, store, config.failedToolDenyThreshold)
+        if (decision.kind === 'deny') {
+          log(`Phase 6-2: denying tool "${exec.name}" (${decision.reason})`)
+          return { kind: 'deny', reason: decision.reason }
+        }
+      } catch (err) {
+        log(`tools/pre-execute adaptive guard error: ${(err as Error).message}`)
+      }
+      return resolved
     })
   }
 
