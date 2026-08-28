@@ -65,7 +65,7 @@ cd ~/.dsh/profiles/web
 CI=true pnpm install --no-frozen-lockfile
 ```
 
-> ⚠️ link 方式安装的插件不会出现在 WebUI 插件列表（插件列表只显示 tarball 安装的包）。但插件功能正常工作。
+> ℹ️ link 方式安装的插件同样会出现在 WebUI 插件列表里。
 
 > 💡 开发流程：改代码 → `pnpm run build` → `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile` → 重启 dsh web
 
@@ -283,7 +283,7 @@ dsh --profile web
 在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，重装。
 
 **插件没出现在 WebUI 插件列表？**
-插件必须通过 `dsh plugin add <tarball>` 安装才会出现在 WebUI 里。link 方式不会显示。
+确保插件已在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 里声明（link 或 tarball 均可），并在 `dsh.profile.bundles` 里注册，然后重启 dsh web。
 
 **`dbPath` 报目录不存在？**
 插件会自动展开 `~` 并创建目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。

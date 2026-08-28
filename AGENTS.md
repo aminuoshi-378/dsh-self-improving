@@ -40,7 +40,7 @@
 
 5. **`better-sqlite3` 需要 `allowBuilds`**：在 `pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，否则 pnpm 会跳过原生编译。
 
-6. **tarball 安装才能被 WebUI 管理**：通过 `dsh plugin add <tarball>` 安装的插件会出现在 WebUI 插件列表里。`link:` workspace 方式不会显示。
+6. **link 与 tarball 都能被 WebUI 管理**：通过 `dsh plugin add <tarball>` 或 `link:` workspace 方式安装的插件都会出现在 WebUI 插件列表里，前提是在 profile 的 `package.json` 里声明依赖并注册到 `dsh.profile.bundles`。
 
 7. **避免 bundle id 冲突**：同一个插件如果既在 dsh 仓库 `packages/` 目录又通过 tarball 安装，会报 `duplicate loader entry id`。解决：workspace 包的 `package.json` 不要 `dsh` 字段。
 
