@@ -1,247 +1,260 @@
 # dsh-ai-enhancements
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) 用的两个插件：
+Two plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh):
 
-1. **dsh-self-improving** — 跨会话学习层，agent 从历史经验中学习
-2. **dsh-rule-enforcement** — 用户规则注入，编辑 markdown 文件即可控制 agent 行为
+1. **dsh-self-improving** — cross-session learning layer: the agent learns from historical experience.
+2. **dsh-rule-enforcement** — user rule injection: edit a markdown file to control agent behavior.
 
-两个插件可以单独用，也可以一起用。
+The two plugins can be used separately or together.
 
----
-
-## 前置要求
-
-- Node.js >= 22（`node -v` 检查）
-- dsh 已安装并配置好 LLM provider
+> 中文: [README.zh-CN.md](README.zh-CN.md)
 
 ---
 
-## dsh-self-improving — 跨会话学习
+## Prerequisites
 
-agent 每次任务结束后自动评分、存入经验库，下次任务时把相关经验注入给 agent 参考。
+- Node.js >= 22 (check with `node -v`)
+- dsh installed and configured with an LLM provider
 
-### 安装到 dsh
+---
 
-#### 方式一：tarball 安装（懒人专属，一键安装）
+## dsh-self-improving — Cross-Session Learning
 
-适合正式使用。安装后在 WebUI → 设置 → 插件 里可见可管理。
+After each task, the agent scores the turn, stores it in an experience database, and injects relevant experiences into the next task.
+
+### Install into dsh
+
+#### Option 1: Tarball install (recommended for production)
+
+Suitable for normal use. After installation the plugin appears in WebUI → Settings → Plugins.
 
 ```bash
-# 1. 克隆并构建
+# 1. Clone and build
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving
 pnpm install
 pnpm run build
 
-# 2. 打包成 tarball
-pnpm pack    # 生成 dsh-self-improving-0.1.0.tgz
+# 2. Pack into a tarball
+pnpm pack    # generates dsh-self-improving-0.1.0.tgz
 
-# 3. 安装到 dsh
+# 3. Install into dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-0.1.0.tgz
 ```
 
-> ⚠️ 仓库更新后需要重新 `pnpm run build && pnpm pack` 并重新安装 tarball 才能生效。
+> After the repo is updated you must re-run `pnpm run build && pnpm pack` and reinstall the tarball.
 
-#### 方式二：link 安装（便于开发）
+#### Option 2: Link install (recommended for development)
 
-适合开发调试。改完代码只需 `pnpm run build` + 重新 install 即可生效，不用每次打包。
+Suitable for development. After changing code you only need to rebuild and reinstall.
 
 ```bash
-# 1. 克隆并构建
+# 1. Clone and build
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving
 pnpm install
 pnpm run build
 
-# 2. 修改 dsh web profile 的 package.json，把依赖从 tarball 切到 link：
-#    编辑 ~/.dsh/profiles/web/package.json，找到 "dsh-self-improving" 那行，改为：
+# 2. Edit ~/.dsh/profiles/web/package.json and switch the dependency from tarball to link:
+#    Find the "dsh-self-improving" line and change it to:
 #    "dsh-self-improving": "link:/absolute/path/to/dsh-self-improving"
 
-# 3. 重新安装依赖（允许更新 lockfile）
+# 3. Reinstall dependencies (allow lockfile update)
 cd ~/.dsh/profiles/web
 CI=true pnpm install --no-frozen-lockfile
 ```
 
-> ℹ️ link 方式安装的插件同样会出现在 WebUI 插件列表里。
+> Link-installed plugins also appear in the WebUI plugin list.
 
-> 💡 开发流程：改代码 → `pnpm run build` → `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile` → 重启 dsh web
+> Development workflow: change code → `pnpm run build` → `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile` → restart dsh web
 
-### 验证
+### Verify
 
 ```bash
 cd /path/to/deepseek-harness
 
-# 跑第一个任务（积累经验）
+# Run the first task (accumulate experience)
 dsh --profile web "create a file called hello.js"
 ```
 
-stderr 会输出：
+stderr output:
 ```
 [self-improving] plugin loaded
 [self-improving] tool/result — write OK
 [self-improving] turn 1 scored — score=0.78 | goal=advanced tools=1 successRate=1.00 steps=1 efficiency=1.00 difficulty=low
 ```
 
-再跑第二个任务，会看到经验注入（P0: 每个 turn 只注入一次）：
+Run a second task and you will see experience injection (P0: once per turn):
 ```
 [self-improving] agent/pre-step — turn=2 step=1 (injecting)
 [self-improving] injecting 1 past experiences into pre-step (best score 0.78)
 ```
 
-### 配置
+### Configuration
 
-安装后默认配置已经可用。如需修改，在 `~/.dsh/profiles/web/cordis.patch.yml` 里覆盖：
+The default configuration works out of the box. To override, edit `~/.dsh/profiles/web/cordis.patch.yml`:
 
 ```yaml
 - id: self-improving
   config:
-    dbPath: '~/.dsh/experiences.db'    # 经验库路径，必须用文件路径才能跨会话
-    metaCognitionEnabled: true        # 是否开启反思（提取经验教训）
-    behaviorAdapterEnabled: true       # 是否开启经验注入
-    minInjectionScore: 0.3             # 只注入评分 >= 0.3 的经验
-    # Phase 6 自适应策略（可选，默认关闭）
-    adaptiveModelEnabled: false        # 是否开启按任务类型历史成功率切换模型
-    strongModel: ''                    # 强推理模型 id（如 deepseek-reasoner），为空则不切换
-    standardModel: ''                  # 标准模型 id（如 deepseek-chat）
-    adaptiveToolGuardEnabled: false    # 是否开启基于历史失败的工具拦截
-    failedToolDenyThreshold: 3         # 工具在 N 个失败经验中出现则拦截
+    dbPath: '~/.dsh/experiences.db'    # Path to the experience DB; must be a file path for cross-session persistence
+    metaCognitionEnabled: true         # Enable reflection / lesson extraction
+    behaviorAdapterEnabled: true       # Enable experience injection
+    minInjectionScore: 0.3             # Only inject experiences with score >= 0.3
+    # Experience injection budget
+    maxInjectionChars: 8000            # Max characters of lesson text injected per turn
+    # Meta-cognition queue
+    maxPendingReflections: 100         # Max pending reflections before dropping oldest
+    # Experience store generational GC limits
+    youngGenMax: 200                   # Max records in young generation
+    oldGenMax: 800                     # Max records in old generation
+    lessonMergeThreshold: 20           # Merge similar lessons when unmerged count reaches this
+    experienceTtlDays: 30              # Old-gen experiences not reused in N days are downgraded
+    forgetScoreThreshold: 0.3          # Active-forgetting score threshold
+    forgetConfidenceThreshold: 0.2     # Active-forgetting confidence threshold
+    # Phase 6 adaptive strategies (optional, disabled by default)
+    adaptiveModelEnabled: false        # Switch model based on historical task-type success rate
+    strongModel: ''                    # Strong reasoning model id (e.g. deepseek-reasoner); disabled if empty
+    standardModel: ''                  # Standard model id (e.g. deepseek-chat)
+    adaptiveToolGuardEnabled: false    # Deny tools that repeatedly appear in failed experiences
+    failedToolDenyThreshold: 3         # Deny a tool that appears in N failed experiences
 ```
 
-#### 内置策略（无需配置，自动生效）
+#### Built-in policies (no configuration required)
 
-- **P0 经验去重**：相同工具序列的经验只保留最新一条
-- **P0 每 turn 只注入一次**：经验仅在 turn 的第一个 step 注入，不重复
-- **P0 步数效率评分**：步数越少分越高，2步=0.95，10步=0.55
-- **P0 任务难度分级**：high（7+步或有过失败）的经验优先注入，low（1-2步全成功）只在不足时填充
-- **P1 隐式负反馈**：用户中断/纠正自动识别为负反馈，不依赖主动点赞/踩
-- **P2 lesson 合并**：每积累 20 条相似 lesson 自动合并，避免碎片化
-- **P3 分代经验管理**：新生代（200条）+ 老年代（800条）双区域 GC
-- **P4 两阶段召回**：粗筛（SQL）+ 精筛（综合评分排序）
-- **P5 任务类型分类**：自动从用户消息推断任务类型（bugfix/feature/refactoring/search/test-writing），同类经验优先注入
-- **P5 WebUI 经验库可视化**：安装 GUI 插件后在 Settings → Plugins → Experiences 查看统计、导入/导出经验
-- **Phase 6 自适应模型选择**（需配置 `adaptiveModelEnabled` + `strongModel`）：按任务类型历史平均分在标准/强推理模型间切换
-- **Phase 6 自适应工具拦截**（需配置 `adaptiveToolGuardEnabled`）：工具在多个失败经验中反复出现时自动拦截，建议改用其他工具
+- **P0 experience deduplication**: identical tool sequences keep only the newest record.
+- **P0 once-per-turn injection**: experiences are injected only at the first step of a turn.
+- **P0 step-efficiency scoring**: fewer steps score higher; 2 steps = 0.95, 10 steps = 0.55.
+- **P0 task-difficulty tiers**: high-difficulty (7+ steps or any failure) experiences are prioritized; low (1–2 steps, all success) is only used as filler.
+- **P1 implicit negative feedback**: user abort/correction is automatically treated as negative feedback without requiring explicit thumbs up/down.
+- **P2 lesson merging**: similar lessons are automatically merged after accumulating 20 unmerged lessons.
+- **P3 generational experience management**: young generation (200 records) + old generation (800 records) dual-region GC.
+- **P4 two-stage recall**: coarse SQL filter + fine-grained composite-score reranking.
+- **P5 task-type classification**: task pattern inferred from user message (bugfix/feature/refactoring/search/test-writing/general); same type prioritized.
+- **P5 WebUI experience panel**: install the GUI plugin and view stats, import/export in Settings → Plugins → Experiences.
+- **Phase 6 adaptive model selection** (requires `adaptiveModelEnabled` + `strongModel`): switch between standard and strong model based on historical task-type average score.
+- **Phase 6 adaptive tool guard** (requires `adaptiveToolGuardEnabled`): automatically deny tools that repeatedly appear in failed experiences.
 
-### 安装 WebUI 经验库面板（可选）
+### Install the WebUI experience panel (optional)
 
 ```bash
 cd dsh-self-improving/gui
 pnpm install
 pnpm run build
 pnpm run bundle
-pnpm pack    # 生成 dsh-self-improving-gui-0.1.0.tgz
+pnpm pack    # generates dsh-self-improving-gui-0.1.0.tgz
 dsh plugin --profile web add /absolute/path/to/dsh-self-improving-gui-0.1.0.tgz
 ```
 
-安装后重启 dsh web，在 设置 → 插件 → Experiences 里查看经验库统计和导入/导出。
+Restart dsh web, then view stats and import/export in Settings → Plugins → Experiences.
 
-> link 方式：在 `~/.dsh/profiles/web/package.json` 里加 `"dsh-self-improving-gui": "link:/absolute/path/to/dsh-self-improving/gui"`，然后 `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`。
+> Link install: add `"dsh-self-improving-gui": "link:/absolute/path/to/dsh-self-improving/gui"` to `~/.dsh/profiles/web/package.json`, then `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`.
 
-### 本地开发测试
+### Local development and testing
 
 ```bash
 cd dsh-self-improving
-pnpm install          # 安装依赖
-pnpm test             # 跑 109 个单元测试（8 个测试文件）
-pnpm run benchmark    # 跑模拟 A/B benchmark，生成 benchmark-report.html
+pnpm install          # install dependencies
+pnpm test             # run 119 unit tests (8 test files)
+pnpm run benchmark    # run simulated A/B benchmark, generates benchmark-report.html
 ```
 
-单独跑某个测试文件：
+Run individual test files:
 
 ```bash
-pnpm run test:store      # 经验库（14 个）
-pnpm run test:evaluator  # 结果评分器（8 个）
-pnpm run test:adapter    # 行为适配器（11 个）
-pnpm run test:meta       # 元认知引擎（11 个）
-pnpm run test:memory     # 记忆能力 benchmark（15 个）
-pnpm run test:advanced   # 高级特性 A1-B2 + T4（30 个）
-pnpm run test:adaptive   # 自适应策略 Phase 6（11 个）
-pnpm run test:event      # 事件解析兼容性（9 个）
+pnpm run test:store      # experience store (14 tests)
+pnpm run test:evaluator  # outcome evaluator (8 tests)
+pnpm run test:adapter    # behavior adapter (11 tests)
+pnpm run test:meta       # meta-cognition engine (11 tests)
+pnpm run test:memory     # memory benchmark (15 tests)
+pnpm run test:advanced   # advanced features A1-B2 + T4 (30 tests)
+pnpm run test:adaptive   # adaptive strategies Phase 6 (11 tests)
+pnpm run test:event      # event parsing compatibility (9 tests)
 ```
 
 ---
 
-## dsh-rule-enforcement — 用户规则注入
+## dsh-rule-enforcement — User Rule Injection
 
-编辑 `~/.dsh/rules.md` 写入规则，规则会自动注入到 agent 的系统提示词中。改了文件立即生效，不用重启。
+Edit `~/.dsh/rules.md` to add rules; they are automatically injected into the agent system prompt. Changes take effect immediately without restart.
 
-### 安装到 dsh
+### Install into dsh
 
-#### 方式一：tarball 安装（懒人专属，一键安装）
+#### Option 1: Tarball install (recommended for production)
 
 ```bash
-# 1. 克隆并构建
+# 1. Clone and build
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving/dsh-rule-enforcement
 pnpm install
 pnpm run build
-pnpm pack    # 生成 dsh-rule-enforcement-0.1.4.tgz
+pnpm pack    # generates dsh-rule-enforcement-0.1.4.tgz
 
-# 2. 安装到 dsh
+# 2. Install into dsh
 cd /path/to/deepseek-harness
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-0.1.4.tgz
 ```
 
-#### 方式二：link 安装（便于开发）
+#### Option 2: Link install (recommended for development)
 
 ```bash
-# 1. 克隆并构建
+# 1. Clone and build
 git clone https://github.com/aminuoshi-378/dsh-self-improving.git
 cd dsh-self-improving/dsh-rule-enforcement
 pnpm install
 pnpm run build
 
-# 2. 修改 ~/.dsh/profiles/web/package.json，改为：
+# 2. Edit ~/.dsh/profiles/web/package.json and change to:
 #    "dsh-rule-enforcement": "link:/absolute/path/to/dsh-self-improving/dsh-rule-enforcement"
 
-# 3. 重新安装依赖（允许更新 lockfile）
+# 3. Reinstall dependencies (allow lockfile update)
 cd ~/.dsh/profiles/web
 CI=true pnpm install --no-frozen-lockfile
 ```
 
-### 安装 WebUI 编辑面板（可选）
+### Install the WebUI rule editor (optional)
 
 ```bash
 cd dsh-rule-enforcement/src/gui
 pnpm install
 pnpm run build
 pnpm run bundle
-pnpm pack    # 生成 dsh-rule-enforcement-gui-0.1.3.tgz
+pnpm pack    # generates dsh-rule-enforcement-gui-0.1.3.tgz
 dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tgz
 ```
 
-安装后重启 dsh web，在 设置 → 插件 → Rules 里编辑规则。
+Restart dsh web, then edit rules in Settings → Plugins → Rules.
 
-### 编辑规则
+### Edit rules
 
-直接编辑文件 `~/.dsh/rules.md`：
+Edit the file `~/.dsh/rules.md` directly:
 
 ```markdown
-# 项目规则
+# Project rules
 
-- 用户用中文提问时用中文回复
-- 提交前先更新 CHANGELOG
-- 新文件用 TypeScript
-- git push 之前先进行安全检查
+- Reply in Chinese when the user asks in Chinese
+- Update CHANGELOG before committing
+- New files should use TypeScript
+- Run security checks before git push
 ```
 
-或通过 WebUI 编辑。改完保存即可，下次 agent 请求时自动生效。
+Or edit via the WebUI. Save and the rules take effect on the next agent request.
 
-### 本地开发测试
+### Local development and testing
 
 ```bash
 cd dsh-rule-enforcement
 pnpm install
-pnpm run typecheck    # 类型检查
-pnpm test             # 跑 10 个测试
+pnpm run typecheck    # type check
+pnpm test             # run 10 tests
 ```
 
 ---
 
-## 全部一起装
+## Install all together
 
-### tarball 方式
+### Tarball
 
 ```bash
 cd /path/to/deepseek-harness
@@ -252,9 +265,9 @@ dsh plugin --profile web add /absolute/path/to/dsh-rule-enforcement-gui-0.1.3.tg
 dsh --profile web
 ```
 
-### link 方式
+### Link
 
-编辑 `~/.dsh/profiles/web/package.json`：
+Edit `~/.dsh/profiles/web/package.json`:
 
 ```json
 {
@@ -275,30 +288,30 @@ dsh --profile web
 
 ---
 
-## 常见问题
+## FAQ
 
-**安装时 `better-sqlite3` 报错？**
-在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 里加 `allowBuilds: { better-sqlite3: true }`，重装。
+**`better-sqlite3` error during install?**
+Add `allowBuilds: { better-sqlite3: true }` to `~/.dsh/profiles/web/pnpm-workspace.yaml`, then reinstall.
 
-**插件没出现在 WebUI 插件列表？**
-确保插件已在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 里声明（link 或 tarball 均可），并在 `dsh.profile.bundles` 里注册，然后重启 dsh web。
+**Plugin not showing in WebUI plugin list?**
+Make sure the plugin is declared in `~/.dsh/profiles/web/package.json` dependencies (link or tarball), registered in `dsh.profile.bundles`, and restart dsh web.
 
-**`dbPath` 报目录不存在？**
-插件会自动展开 `~` 并创建目录。如果还是报错，手动执行 `mkdir -p ~/.dsh`。
+**`dbPath` says directory does not exist?**
+The plugin automatically expands `~` and creates directories. If it still fails, run `mkdir -p ~/.dsh` manually.
 
-**tarball 安装时报 type stripping 错误？**
-打包前必须先 `pnpm run build` 编译 `.ts` → `.js`，确保 `dist/` 目录存在。
+**Tarball install shows type stripping error?**
+You must run `pnpm run build` to compile `.ts` → `.js` before packing, and make sure the `dist/` directory exists.
 
-**`duplicate loader entry id`？**
-同一个插件被加载了两次。确保 dsh 仓库 `packages/` 目录下没有同名插件，或者其 `package.json` 没有 `dsh` 字段。
+**`duplicate loader entry id`?**
+The same plugin is being loaded twice. Make sure there is no plugin with the same name in the dsh repo `packages/` directory, or its `package.json` has no `dsh` field.
 
-**link 方式改了代码不生效？**
-改完代码后需要重新编译：`pnpm run build`，然后在 profile 目录重新安装：`cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`。
+**Link install changes not taking effect?**
+After changing code, rebuild: `pnpm run build`, then reinstall in the profile directory: `cd ~/.dsh/profiles/web && CI=true pnpm install --no-frozen-lockfile`.
 
 ---
 
-## 更多文档
+## More documentation
 
-- [架构设计](docs/design.md) — 四层架构详解、P0-P5 实现细节、安全边界、实施路径
-- [待办事项](todo.md) — P0-P5 完成情况与后续计划
-- [变更日志](CHANGELOG.md)
+- [Architecture design](docs/design.md) — four-layer architecture, P0-P5 implementation details, safety boundaries, roadmap
+- [TODO](todo.md) — P0-P5 completion status and future plans
+- [Changelog](CHANGELOG.md)

@@ -43,6 +43,20 @@ export interface Config {
   metaCognitionEnabled: boolean
   behaviorAdapterEnabled: boolean
   minInjectionScore: number
+  // Lesson injection budget (characters)
+  maxInjectionChars: number
+  // Meta-cognition reflection queue cap
+  maxPendingReflections: number
+  // Experience store generational GC limits
+  youngGenMax: number
+  oldGenMax: number
+  // Lesson merge threshold (unmerged lessons count)
+  lessonMergeThreshold: number
+  // Experience TTL (days)
+  experienceTtlDays: number
+  // Active forgetting thresholds
+  forgetScoreThreshold: number
+  forgetConfidenceThreshold: number
   // Phase 6: adaptive strategy
   adaptiveModelEnabled: boolean
   strongModel: string
@@ -60,6 +74,14 @@ export function rulesSchema() {
       metaCognitionEnabled: { type: 'boolean', default: true },
       behaviorAdapterEnabled: { type: 'boolean', default: true },
       minInjectionScore: { type: 'number', default: 0.3 },
+      maxInjectionChars: { type: 'number', default: 8000 },
+      maxPendingReflections: { type: 'number', default: 100 },
+      youngGenMax: { type: 'number', default: 200 },
+      oldGenMax: { type: 'number', default: 800 },
+      lessonMergeThreshold: { type: 'number', default: 20 },
+      experienceTtlDays: { type: 'number', default: 30 },
+      forgetScoreThreshold: { type: 'number', default: 0.3 },
+      forgetConfidenceThreshold: { type: 'number', default: 0.2 },
       // Phase 6: adaptive strategy (all opt-in; defaults keep behavior unchanged)
       adaptiveModelEnabled: { type: 'boolean', default: false },
       strongModel: { type: 'string', default: '' },
@@ -155,7 +177,14 @@ export function countUserMessagesInTurn(events: any[], turn: number): number {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  const store = new ExperienceStore(config.dbPath)
+  const store = new ExperienceStore(config.dbPath, {
+    youngGenMax: config.youngGenMax,
+    oldGenMax: config.oldGenMax,
+    lessonMergeThreshold: config.lessonMergeThreshold,
+    experienceTtlDays: config.experienceTtlDays,
+    forgetScoreThreshold: config.forgetScoreThreshold,
+    forgetConfidenceThreshold: config.forgetConfidenceThreshold,
+  })
 
   log('plugin loaded', { dbPath: config.dbPath, metaCognition: config.metaCognitionEnabled, behaviorAdapter: config.behaviorAdapterEnabled })
 
@@ -481,7 +510,7 @@ export function apply(ctx: Context, config: Config): void {
     // P2: Synchronously generate lesson (don't wait for maintenance)
     if (config.metaCognitionEnabled) {
       // Drop oldest if queue is full (maintenance delayed, e.g. headless mode)
-      if (pendingReflections.length >= MAX_PENDING_REFLECTIONS) {
+      if (pendingReflections.length >= maxPendingReflections) {
         pendingReflections.shift()
         log('pending reflections queue full, dropped oldest entry')
       }
@@ -632,10 +661,10 @@ export function apply(ctx: Context, config: Config): void {
             .slice(0, Math.max(0, 7 - high.length - medium.length))
           let selected = [...high, ...medium, ...low]
 
-          // E3: Token budget control — total injected text ≤ 8000 chars (~2000 tokens)
+          // E3: Token budget control — total injected text ≤ maxInjectionChars chars (~4 chars/token)
           // R2: No-lesson records don't consume budget (align with BehaviorAdapter)
-          const MAX_INJECT_CHARS = 8000
-          let charBudget = MAX_INJECT_CHARS
+          const maxInjectionChars = config.maxInjectionChars
+          let charBudget = maxInjectionChars
           const budgeted: typeof selected = []
           for (const rec of selected) {
             const lessonText = extractLessonText(rec.lesson) ?? ''
@@ -831,7 +860,7 @@ export function apply(ctx: Context, config: Config): void {
     injectedIds?: string[] // J7: ids of experiences injected in the turn that produced this reflection
   }
   // Cap the queue to prevent unbounded growth when maintenance is delayed (e.g. headless mode)
-  const MAX_PENDING_REFLECTIONS = 100
+  const maxPendingReflections = config.maxPendingReflections
   const pendingReflections: PendingReflection[] = []
 
   // Process reflections + periodic maintenance.

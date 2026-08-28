@@ -24,13 +24,24 @@ import type {
 } from '../types/index.js'
 import { extractLessonText } from '../types/index.js'
 
+export interface BehaviorAdapterOptions {
+  /** Maximum characters to inject per turn (4 chars ≈ 1 token). */
+  maxInjectionChars?: number
+}
+
+const DEFAULT_BEHAVIOR_ADAPTER_OPTIONS: Required<BehaviorAdapterOptions> = {
+  maxInjectionChars: 8000,
+}
+
 export class BehaviorAdapter {
   private store: ExperienceStore
   private preferences: Map<string, LearnedPreference> = new Map()
   private injectionCount = 0
+  private options: Required<BehaviorAdapterOptions>
 
-  constructor(store: ExperienceStore) {
+  constructor(store: ExperienceStore, options: BehaviorAdapterOptions = {}) {
     this.store = store
+    this.options = { ...DEFAULT_BEHAVIOR_ADAPTER_OPTIONS, ...options }
   }
 
   // -------------------------------------------------------------------------
@@ -72,9 +83,9 @@ export class BehaviorAdapter {
       ...low.slice(0, Math.max(0, 7 - high.length - medium.length)),
     ]
 
-    // P3: Token budget control (~2000 tokens ≈ 8000 chars, using 4 chars/token approx)
-    const MAX_CHARS = 8000
-    let charBudget = MAX_CHARS
+    // P3: Token budget control (~maxInjectionChars chars, using 4 chars/token approx)
+    const maxInjectionChars = this.options.maxInjectionChars
+    let charBudget = maxInjectionChars
     const budgeted: ExperienceRecord[] = []
     for (const rec of selected) {
       const lessonText = extractLessonText(rec.lesson) ?? ''

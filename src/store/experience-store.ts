@@ -23,23 +23,38 @@ import type {
 } from '../types/index.js'
 import { isValidImportedExperience } from '../types/index.js'
 
-const YOUNG_GEN_MAX = 200
-const OLD_GEN_MAX = 800
-const LESSON_MERGE_THRESHOLD = 20
+export interface StoreOptions {
+  /** Maximum records in young generation before minor GC. */
+  youngGenMax?: number
+  /** Maximum records in old generation before major GC. */
+  oldGenMax?: number
+  /** Number of unmerged lessons that triggers lesson merging. */
+  lessonMergeThreshold?: number
+  /** Days after which an unaccessed old-gen experience is downgraded. */
+  experienceTtlDays?: number
+  /** Score below which a low-confidence low-difficulty record may be forgotten. */
+  forgetScoreThreshold?: number
+  /** Confidence below which a low-score low-difficulty record may be forgotten. */
+  forgetConfidenceThreshold?: number
+}
 
-// A2: TTL — experiences not injected in TTL_DAYS get downgraded (old gen) or evicted
-const TTL_DAYS = 30
-const TTL_MS = TTL_DAYS * 24 * 60 * 60 * 1000
-
-// A5: Active forgetting — threshold for proactively cleaning low-value experiences
-const FORGET_SCORE_THRESHOLD = 0.3
-const FORGET_CONFIDENCE_THRESHOLD = 0.2
+const DEFAULT_STORE_OPTIONS: Required<StoreOptions> = {
+  youngGenMax: 200,
+  oldGenMax: 800,
+  lessonMergeThreshold: 20,
+  experienceTtlDays: 30,
+  forgetScoreThreshold: 0.3,
+  forgetConfidenceThreshold: 0.2,
+}
 
 export class ExperienceStore {
   private db: DatabaseType
   private storeCountSinceGC = 0
+  private options: Required<StoreOptions>
 
-  constructor(dbPath: string = ':memory:') {
+  constructor(dbPath: string = ':memory:', options: StoreOptions = {}) {
+    this.options = { ...DEFAULT_STORE_OPTIONS, ...options }
+
     const homeDir = process.env.HOME || homedir()
     const resolvedPath = dbPath.startsWith('~/')
       ? dbPath.replace('~/', `${homeDir}/`)
@@ -51,6 +66,11 @@ export class ExperienceStore {
     this.db = new Database(resolvedPath)
     this.db.pragma('journal_mode = WAL')
     this.initSchema()
+  }
+
+  /** Current store options (read-only). */
+  getOptions(): Readonly<Required<StoreOptions>> {
+    return { ...this.options }
   }
 
   // -------------------------------------------------------------------------
@@ -654,11 +674,11 @@ export class ExperienceStore {
   /**
    * P3: Generational GC — young gen + old gen dual-region management.
    *
-   * Young Gen (generation=0): max YOUNG_GEN_MAX records.
+   * Young Gen (generation=0): max options.youngGenMax records.
    *   - Minor GC when over capacity: evict low quality (low score, no lesson, low difficulty)
    *   - Survivors (reused or score>=0.8 or has lesson) promoted to old gen
    *
-   * Old Gen (generation=1): max OLD_GEN_MAX records.
+   * Old Gen (generation=1): max options.oldGenMax records.
    *   - Major GC when over capacity: evict by quality priority
    *     Priority: difficulty=low > no lesson > score<0.5 > merged=true
    *     Never evict: difficulty=high with lesson
@@ -680,12 +700,12 @@ export class ExperienceStore {
         'SELECT COUNT(*) as c FROM experiences WHERE generation = 0',
       ).get() as { c: number }).c
 
-      if (youngCount > YOUNG_GEN_MAX) {
+      if (youngCount > this.options.youngGenMax) {
         // Promote survivors first
         this.promoteYoungGen()
 
         // Then evict low quality from young gen
-        const toEvict = youngCount - YOUNG_GEN_MAX
+        const toEvict = youngCount - this.options.youngGenMax
         this.db.prepare(`
           DELETE FROM experiences
           WHERE id IN (
@@ -707,8 +727,8 @@ export class ExperienceStore {
         'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
       ).get() as { c: number }).c
 
-      if (oldCount > OLD_GEN_MAX) {
-        const toEvict = oldCount - OLD_GEN_MAX
+      if (oldCount > this.options.oldGenMax) {
+        const toEvict = oldCount - this.options.oldGenMax
         this.db.prepare(`
           DELETE FROM experiences
           WHERE id IN (
@@ -730,7 +750,7 @@ export class ExperienceStore {
         const remainingOld = (this.db.prepare(
           'SELECT COUNT(*) as c FROM experiences WHERE generation = 1',
         ).get() as { c: number }).c
-        if (remainingOld > OLD_GEN_MAX) {
+        if (remainingOld > this.options.oldGenMax) {
           this.db.prepare(`
             DELETE FROM experiences
             WHERE id IN (
@@ -739,7 +759,7 @@ export class ExperienceStore {
               ORDER BY outcome_score ASC
               LIMIT @extra
             )
-          `).run({ extra: remainingOld - OLD_GEN_MAX })
+          `).run({ extra: remainingOld - this.options.oldGenMax })
         }
       }
     })
@@ -774,19 +794,19 @@ export class ExperienceStore {
         AND lesson IS NULL
         AND difficulty = 'low'
         AND merged = 0
-    `).run({ scoreThreshold: FORGET_SCORE_THRESHOLD, confidenceThreshold: FORGET_CONFIDENCE_THRESHOLD })
+    `).run({ scoreThreshold: this.options.forgetScoreThreshold, confidenceThreshold: this.options.forgetConfidenceThreshold })
     if (result.changes > 0) {
       // Could log here if needed
     }
   }
 
   /**
-   * A2: TTL expiry — downgrade old-gen experiences not injected in TTL_DAYS to young gen.
+   * A2: TTL expiry — downgrade old-gen experiences not injected in experienceTtlDays to young gen.
    * This lets stale experiences re-enter the Minor GC cycle and potentially get evicted.
    * High-difficulty experiences with lessons are exempt (knowledge may still be valuable even if stale).
    */
   private applyTTL(): void {
-    const cutoff = Date.now() - TTL_MS
+    const cutoff = Date.now() - this.options.experienceTtlDays * 24 * 60 * 60 * 1000
     this.db.prepare(`
       UPDATE experiences
       SET generation = 0
@@ -965,7 +985,7 @@ export class ExperienceStore {
    * Get unmerged lessons grouped by difficulty + tool similarity.
    * Returns groups suitable for LLM-based merging.
    */
-  getUnmergedLessonGroups(threshold: number = LESSON_MERGE_THRESHOLD): {
+  getUnmergedLessonGroups(threshold: number = this.options.lessonMergeThreshold): {
     difficulty: string
     toolsKey: string
     records: ExperienceRecord[]

@@ -8,6 +8,7 @@
 两个插件可以单独用，也可以一起用。
 
 > English: [README.md](README.md)
+> 中文: [README.zh-CN.md](README.zh-CN.md)
 
 ---
 
@@ -102,6 +103,17 @@ stderr 会输出：
     metaCognitionEnabled: true        # 是否开启反思（提取经验教训）
     behaviorAdapterEnabled: true       # 是否开启经验注入
     minInjectionScore: 0.3             # 只注入评分 >= 0.3 的经验
+    # 经验注入预算
+    maxInjectionChars: 8000            # 每 turn 注入 lesson 文本的最大字符数
+    # 元认知反思队列
+    maxPendingReflections: 100         # 反思队列上限，超出时丢弃最旧条目
+    # 经验库分代 GC 上限
+    youngGenMax: 200                   # 新生代最大记录数
+    oldGenMax: 800                     # 老年代最大记录数
+    lessonMergeThreshold: 20           # 未合并 lesson 数达到该值时触发合并
+    experienceTtlDays: 30              # 老年代经验 N 天未注入则降级到新生代
+    forgetScoreThreshold: 0.3          # 主动遗忘分数阈值
+    forgetConfidenceThreshold: 0.2     # 主动遗忘置信度阈值
     # Phase 6 自适应策略（可选，默认关闭）
     adaptiveModelEnabled: false        # 是否开启按任务类型历史成功率切换模型
     strongModel: ''                    # 强推理模型 id（如 deepseek-reasoner），为空则不切换

@@ -696,6 +696,59 @@
 
 ---
 
+## 域 Y — 硬编码参数清理与配置化（2026-08-28）
+
+> 目标：把散落在代码中的魔法数字/常量改为配置项或具名常量，提升可维护性和可观测性。
+
+### Y1 已配置化的运行时参数 [x]
+- `maxInjectionChars`（默认 8000）：每次 `agent/pre-step` 注入经验的字符预算。
+- `maxPendingReflections`（默认 100）：`turn-stopping` 到 `runMaintenance` 之间的 lesson 反思队列上限。
+- `youngGenMax` / `oldGenMax`（默认 200 / 800）：经验库分代 GC 容量上限。
+- `lessonMergeThreshold`（默认 20）：触发 lesson 合并的未合并 lesson 数量阈值。
+- `experienceTtlDays`（默认 30）：老年代经验 TTL 天数。
+- `forgetScoreThreshold` / `forgetConfidenceThreshold`（默认 0.3 / 0.2）：主动遗忘阈值。
+- 实现：`Config` / `rulesSchema` 增加字段；`ExperienceStore` 增加 `StoreOptions`；`BehaviorAdapter` 增加 `BehaviorAdapterOptions`。
+
+### Y2 仍需整理的内部硬编码阈值 [ ]
+以下阈值仍硬编码在算法内部，当前不适合暴露给用户配置，但应整理为具名常量或枚举，避免魔法数字：
+
+#### 评分与难度（`src/types/index.ts`）
+- `SCORE_WEIGHTS` 各项权重（`goalProgress:0.3, toolSuccess:0.2, stepEfficiency:0.25, guardPenalty:0.15, userFeedback:0.1`）—— 当前是 const 对象，已是具名常量，无需改动。
+- `GUARD_PENALTY_PER_TRIGGER = 0.1` —— 已是具名常量。
+- `computeStepEfficiency` 公式：`stepCount<=1` 返回 1.0，否则 `1-(stepCount-1)*0.05`，下限 0 —— 适合抽出 `STEP_EFFICIENCY_DECAY = 0.05`。
+- `computeDifficulty`：1-2 步且成功为 low，3-6 步 medium，7+ 或失败为 high —— 适合抽出 `LOW_DIFFICULTY_MAX_STEPS = 2`、`MEDIUM_DIFFICULTY_MAX_STEPS = 6`。
+- `goalProgressScore` / `feedbackScore` 映射值 —— 当前是 switch，可改为 ScoreMap 枚举或常量对象。
+
+#### 经验提取与反思（`src/reflection.ts`, `src/index.ts`）
+- rule-based reflection 分界：`outcomeScore >= 0.8` 为成功，`<= 0.3` 为失败 —— 适合 `REFLECTION_SUCCESS_THRESHOLD` / `REFLECTION_FAILURE_THRESHOLD`。
+- 原子事实提取：`outcomeScore >= 0.7`（有效），`<= 0.3`（失败）—— 适合 `EFFECTIVE_FACT_SCORE_THRESHOLD` / `FAILED_FACT_SCORE_THRESHOLD`。
+- pre-step 注入 best/worst 经验：`best.outcomeScore >= 0.6`，`worst.outcomeScore <= 0.4` —— 适合 `INJECTION_BEST_THRESHOLD` / `INJECTION_WORST_THRESHOLD`。
+- 正向结果 boost：`outcomeScore >= 0.7` —— 适合 `POSITIVE_OUTCOME_THRESHOLD`。
+
+#### 行为适配器（`src/adapter/behavior-adapter.ts`）
+- 动态 limit 分档：`<50`、`50-200`、`>200` 与 avgScore `>0.7` 的组合 —— 当前是计算逻辑，阈值可提取为 `SMALL_STORE_THRESHOLD = 50`、`MEDIUM_STORE_THRESHOLD = 200`、`HIGH_QUALITY_THRESHOLD = 0.7`。
+- preference 过滤：`confidence > 0.3` —— 适合 `PREFERENCE_CONFIDENCE_THRESHOLD`。
+- 模型选择样本数、分数阈值已集中在 `src/adaptive-strategy.ts`，已具名常量，无需改动。
+- `distillPreferences`：`<10` 条不提炼、`positiveRate > 0.7`、`negativeRate > 0.3`、`avgScore < 0.4`、`avgScore > 0.8` —— 适合提取为具名常量。
+
+#### 经验库内部（`src/store/experience-store.ts`）
+- confidence 调整因子：`incrementReuse` 中 `confidence * 0.9` 和 `MAX(0.1, ...)`；`boostConfidence` 中 `+0.2` 和 `MIN(1.0, ...)`；atomic fact upsert 中 `+0.1` —— 适合 `CONFIDENCE_DECAY_FACTOR`、`MIN_CONFIDENCE`、`CONFIDENCE_BOOST`、`MAX_CONFIDENCE`、`FACT_CONFIDENCE_BOOST`。
+- GC 晋升条件：`reuse_count >= 1`、`score >= 0.8`、`merged = 1` —— 适合 `PROMOTE_REUSE_THRESHOLD`、`PROMOTE_SCORE_THRESHOLD`。
+- Major GC 排序中的 `outcome_score < 0.5` —— 适合 `LOW_SCORE_GC_THRESHOLD`。
+- query 粗筛 candidate pool 的分档阈值：`<50`、`50-200`、`>200`、`avgScore > 0.7`，`limit*5`、`15/25`、`40/60` —— 与 adapter 共享阈值，建议集中到 `types/index.ts` 或 `store/options`。
+
+#### 隐式反馈（`src/index.ts`）
+- 用户重述任务相似度：`similarity > 0.7` —— 适合 `TASK_RESTATED_SIMILARITY_THRESHOLD`。
+- 用户消息 word overlap 过滤：单词长度 `> 2` —— 适合 `MIN_WORD_LEN`。
+- 低价值 turn 过滤：`difficulty === 'low' && entry.tools.length <= 2` —— 适合 `LOW_VALUE_TOOL_MAX = 2`。
+
+### Y3 配置化验收标准 [ ]
+- [ ] Y2 中所有阈值提取为具名常量或枚举，魔法数字不再直接出现在 if/排序公式中。
+- [ ] 常量集中放在 `src/types/constants.ts` 或就近模块顶部，便于统一审计。
+- [ ] `pnpm run build` 与 `pnpm test` 通过。
+
+---
+
 ## 域 U — 真机联调发现与修复（2026-08-26）
 
 > 焦点：dsh 真实环境（`dsh --profile web`）跑任务后，从 experiences.db 反查发现的事件结构不匹配 bug。
