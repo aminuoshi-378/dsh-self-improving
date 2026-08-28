@@ -121,20 +121,17 @@ The default configuration works out of the box. To override, edit `~/.dsh/profil
     failedToolDenyThreshold: 3         # Deny a tool that appears in N failed experiences
 ```
 
-#### Built-in policies (no configuration required)
+#### Built-in behaviors (no configuration required)
 
-- **P0 experience deduplication**: identical tool sequences keep only the newest record.
-- **P0 once-per-turn injection**: experiences are injected only at the first step of a turn.
-- **P0 step-efficiency scoring**: fewer steps score higher; 2 steps = 0.95, 10 steps = 0.55.
-- **P0 task-difficulty tiers**: high-difficulty (7+ steps or any failure) experiences are prioritized; low (1–2 steps, all success) is only used as filler.
-- **P1 implicit negative feedback**: user abort/correction is automatically treated as negative feedback without requiring explicit thumbs up/down.
-- **P2 lesson merging**: similar lessons are automatically merged after accumulating 20 unmerged lessons.
-- **P3 generational experience management**: young generation (200 records) + old generation (800 records) dual-region GC.
-- **P4 two-stage recall**: coarse SQL filter + fine-grained composite-score reranking.
-- **P5 task-type classification**: task pattern inferred from user message (bugfix/feature/refactoring/search/test-writing/general); same type prioritized.
-- **P5 WebUI experience panel**: install the GUI plugin and view stats, import/export in Settings → Plugins → Experiences.
-- **Phase 6 adaptive model selection** (requires `adaptiveModelEnabled` + `strongModel`): switch between standard and strong model based on historical task-type average score.
-- **Phase 6 adaptive tool guard** (requires `adaptiveToolGuardEnabled`): automatically deny tools that repeatedly appear in failed experiences.
+- Experience deduplication by tool sequence.
+- One injection per turn.
+- Step-efficiency and task-difficulty scoring.
+- Implicit negative feedback detection (abort / correction / task restatement).
+- Automatic lesson merging and generational GC.
+- Task-type classification for better matching.
+- Optional adaptive model switching and tool guard (see Phase 6 config above).
+
+For implementation details, see [docs/design.md](docs/design.md).
 
 ### Install the WebUI experience panel (optional)
 

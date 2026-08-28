@@ -156,7 +156,7 @@ query 结果按 `context_hash` 去重，相同工具序列只保留最新一条�
 | medium | 2 条 |
 | low | 不足时填充 |
 
-Token 预算控制：注入内容总长度 ≤ 8000 字符，超出从低优先级开始砍。
+Token 预算控制：注入内容总长度 ≤ `maxInjectionChars`（默认 8000）字符，超出从低优先级开始砍。
 
 ### P4: 结构化 lesson 提取
 
@@ -235,12 +235,12 @@ CREATE TABLE experiences (
 
 借鉴 JVM 分代垃圾回收：
 
-**新生代（Young Gen，capacity=200）**：
+**新生代（Young Gen，capacity=`youngGenMax`，默认 200）**：
 - 新写入的经验先进新生代
 - Minor GC 满时淘汰低质量（score 低、无 lesson、difficulty 低）
 - 存活的经验（reuse_count ≥ 1 或 score ≥ 0.8 且有 lesson）晋升到老年代
 
-**老年代（Old Gen，capacity=800）**：
+**老年代（Old Gen，capacity=`oldGenMax`，默认 800）**：
 - 经过验证的优质经验
 - Major GC 满时按质量淘汰：low 难度 > 无 lesson > score < 0.5 > merged
 - 不淘汰：high 难度且有 lesson 的经验
@@ -252,7 +252,7 @@ CREATE TABLE experiences (
 
 ### P4: 两阶段召回
 
-1. **粗筛**（SQL）：按 outcome_score ≥ minScore + merged = 0 过滤，动态候选集大小（< 50 全量、50-200 取 top 20、> 200 取 top 50）
+1. **粗筛**（SQL）：按 outcome_score ≥ minScore + merged = 0 过滤，动态候选集大小按经验库总量和质量调整（默认 < 50 全量、50-200 取 top 15~25、> 200 取 top 40~60，avgScore 高时缩小范围）
 2. **精筛**（内存）：按综合评分排序 `outcome_score × 0.4 + 工具相似度 × 0.3 + 时间近度 × 0.3`
 3. **去重**：按 context_hash 去重，保留最新
 
@@ -268,7 +268,7 @@ CREATE TABLE experiences (
 
 ### 挂载点
 
-`agent/turn-stopping`（入队反思）→ `agent/run-maintenance`（处理队列）。
+`agent/turn-stopping`（入队反思）→ `runMaintenance()`（处理队列，受 `maxPendingReflections` 限制）。
 
 ### P2: 结构化 lesson 生成
 
@@ -291,7 +291,7 @@ CREATE TABLE experiences (
 
 ### P2: 定期合并 lesson
 
-每积累 20 条未合并 lesson 时：
+每积累 `lessonMergeThreshold` 条（默认 20）未合并 lesson 时：
 1. 按 difficulty + 工具序列相似度聚类
 2. 同组内 LLM/规则总结共通之处
 3. 合并产物直接进老年代
@@ -333,7 +333,7 @@ GUI bridge 是**可选的**——没有 `settings` 服务时（headless 模式�
 | 风险 | 缓解 |
 |------|------|
 | 学习层污染确定性循环 | 仅通过建议性注入干预，不修改循环代码 |
-| 经验库无限增长 | 分代 GC：新生代 200 + 老年代 800，按质量淘汰 |
+| 经验库无限增长 | 分代 GC：新生代 `youngGenMax` + 老年代 `oldGenMax`，按质量淘汰 |
 | 反思 LLM 调用成本 | 绑定到 runMaintenance 空闲时，rule-based fallback 无 LLM |
 | 错误经验被强化 | 置信度随复用次数衰减，新正结果可 boost |
 | 隐式负反馈误判 | 仅在明确信号（abort、追问）时标记 negative，neutral=0.6 不等于 positive |

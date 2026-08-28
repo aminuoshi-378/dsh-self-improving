@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### 改进 — 硬编码参数配置化（2026-08-28）
+- 新增 7 个可配置项，替代源码中的魔法数字：
+  - `maxInjectionChars`：每 turn 注入经验字符预算（默认 8000）
+  - `maxPendingReflections`：反思队列上限（默认 100）
+  - `youngGenMax` / `oldGenMax`：分代 GC 容量上限（默认 200 / 800）
+  - `lessonMergeThreshold`：触发 lesson 合并的未合并 lesson 数（默认 20）
+  - `experienceTtlDays`：老年代经验 TTL 天数（默认 30）
+  - `forgetScoreThreshold` / `forgetConfidenceThreshold`：主动遗忘阈值（默认 0.3 / 0.2）
+- `ExperienceStore` 增加 `StoreOptions` 构造参数，`BehaviorAdapter` 增加 `BehaviorAdapterOptions` 构造参数
+- `index.ts` 创建 store 和设置反思队列/注入预算时读取配置
+- 测试与构建：`pnpm test` 119 个测试通过，`pnpm run build` 通过
+
+### 文档 — 更新 AGENTS.md、README 与 TODO（2026-08-28）
+- 将任务执行流程、代码风格、安全边界、Token 成本控制等规则融入 `AGENTS.md`
+- `README.md` 改为英文版，`README.zh-CN.md` 改为中文版，顶部互相链接
+- 精简 README 内置行为描述，指向 `docs/design.md` 查看实现细节
+- README 配置示例同步新增 7 项配置项
+- `todo.md` 新增“域 Y — 硬编码参数清理与配置化”记录已完成项和待整理的内部阈值
+
 ### 修复 — Windows `~` 路径展开失效 [P0]（2026-08-26）
 - `~/.dsh/experiences.db` 的 `~` 用 `process.env.HOME` 展开，但 Windows 下 `HOME` 为 `undefined`，路径变成 `undefined/.dsh/experiences.db`，`ExperienceStore` 初始化即抛 `directory does not exist`，插件整体无法加载
 - `experience-store.ts` / `preference-extractor.ts` 改为 `process.env.HOME || homedir()`（`node:os`）跨平台取主目录
