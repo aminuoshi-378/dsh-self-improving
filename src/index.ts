@@ -25,6 +25,16 @@ import { getPreferencesFilePath, readPreferences, extractPreference, appendPrefe
 import { tryLLMComplete, llmMergeLessons } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
 import { selectModel, guardTool } from './adaptive-strategy.js'
+import {
+  EFFECTIVE_FACT_SCORE_THRESHOLD,
+  FAILED_FACT_SCORE_THRESHOLD,
+  INJECTION_BEST_THRESHOLD,
+  INJECTION_WORST_THRESHOLD,
+  POSITIVE_OUTCOME_THRESHOLD,
+  TASK_RESTATED_SIMILARITY_THRESHOLD,
+  MIN_WORD_LEN,
+  LOW_VALUE_TOOL_MAX,
+} from './types/constants.js'
 
 export const name = 'self-improving'
 
@@ -262,7 +272,7 @@ export function apply(ctx: Context, config: Config): void {
     const stepCountForFilter = Math.max(entry.stepCount, 1)
     const hasFailuresForFilter = entry.tools.some(t => !t.success)
     const difficultyForFilter = computeDifficulty(stepCountForFilter, hasFailuresForFilter)
-    if (difficultyForFilter === 'low' && entry.tools.length <= 2) {
+    if (difficultyForFilter === 'low' && entry.tools.length <= LOW_VALUE_TOOL_MAX) {
       log(`turn-stopping: low-value turn (P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
       agentTools.delete(agent.id)
       // M4: Also clean up task unit for no-goal turns to prevent map leak
@@ -361,16 +371,16 @@ export function apply(ctx: Context, config: Config): void {
         const prevText = findUserMessageText(events, turn - 1)
         if (curText && prevText) {
           // Simple word-overlap similarity (no LLM needed, deterministic)
-          const curWords = new Set(curText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
-          const prevWords = new Set(prevText.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2))
+          const curWords = new Set(curText.toLowerCase().split(/\s+/).filter((w: string) => w.length > MIN_WORD_LEN))
+          const prevWords = new Set(prevText.toLowerCase().split(/\s+/).filter((w: string) => w.length > MIN_WORD_LEN))
           if (curWords.size > 0 && prevWords.size > 0) {
             let overlap = 0
             for (const w of curWords) {
               if (prevWords.has(w)) overlap++
             }
             const similarity = overlap / Math.min(curWords.size, prevWords.size)
-            // >0.7 word overlap → user is likely restating the same task
-            if (similarity > 0.7) {
+            // > threshold word overlap → user is likely restating the same task
+            if (similarity > TASK_RESTATED_SIMILARITY_THRESHOLD) {
               implicitNegative = true
             }
           }
@@ -492,11 +502,11 @@ export function apply(ctx: Context, config: Config): void {
     // I4: Extract atomic facts from this turn and write to atomic_facts table
     try {
       const subject = `workspace:${wsDigest ?? 'default'}`
-      if (outcomeScore >= 0.7 && toolsUsed.length > 0) {
+      if (outcomeScore >= EFFECTIVE_FACT_SCORE_THRESHOLD && toolsUsed.length > 0) {
         // T4: multi-valued fact — each distinct sequence is its own fact
         store.upsertToolSequenceFact(subject, 'effective-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
       }
-      if (outcomeScore <= 0.3 && toolsUsed.length > 0) {
+      if (outcomeScore <= FAILED_FACT_SCORE_THRESHOLD && toolsUsed.length > 0) {
         store.upsertToolSequenceFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
       }
       if (taskPattern) {
@@ -692,11 +702,11 @@ export function apply(ctx: Context, config: Config): void {
           log(`injecting ${selected.length} past experiences into pre-step (best score ${best.outcomeScore.toFixed(2)})`)
 
           const lines: string[] = ['## Past Experience (advisory)', '']
-          if (best.outcomeScore >= 0.6) {
+          if (best.outcomeScore >= INJECTION_BEST_THRESHOLD) {
             const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
             lines.push(`- **What worked**: ${lesson}`)
           }
-          if (worst && worst.outcomeScore <= 0.4) {
+          if (worst && worst.outcomeScore <= INJECTION_WORST_THRESHOLD) {
             const lesson = extractLessonText(worst.lesson) ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
             lines.push(`- **What failed**: ${lesson}`)
           }
@@ -918,7 +928,7 @@ export function apply(ctx: Context, config: Config): void {
       store.updateLesson(entry.expId, reflection)
 
       // I6/J7: Boost confidence on experiences that were injected in this turn if outcome was positive
-      if (entry.outcomeScore >= 0.7 && entry.injectedIds && entry.injectedIds.length > 0) {
+      if (entry.outcomeScore >= POSITIVE_OUTCOME_THRESHOLD && entry.injectedIds && entry.injectedIds.length > 0) {
         for (const id of entry.injectedIds) {
           if (id !== entry.expId) {
             store.boostConfidence(id)

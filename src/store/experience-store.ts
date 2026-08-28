@@ -22,6 +22,21 @@ import type {
   ExportedExperience,
 } from '../types/index.js'
 import { isValidImportedExperience } from '../types/index.js'
+import {
+  SMALL_STORE_THRESHOLD,
+  MEDIUM_STORE_THRESHOLD,
+  HIGH_QUALITY_THRESHOLD,
+  CONFIDENCE_DECAY_FACTOR,
+  MIN_CONFIDENCE,
+  CONFIDENCE_BOOST,
+  MAX_CONFIDENCE,
+  FACT_INITIAL_CONFIDENCE,
+  FACT_CONFIDENCE_BOOST,
+  PROMOTE_REUSE_THRESHOLD,
+  PROMOTE_SCORE_THRESHOLD,
+  LOW_SCORE_GC_THRESHOLD,
+  MERGED_OUTCOME_SCORE,
+} from '../types/constants.js'
 
 export interface StoreOptions {
   /** Maximum records in young generation before minor GC. */
@@ -332,12 +347,12 @@ export class ExperienceStore {
     const stmt = this.db.prepare(`
       UPDATE experiences
       SET reuse_count = reuse_count + 1,
-          confidence = MAX(0.1, confidence * 0.9),
+          confidence = MAX(@minConfidence, confidence * @decayFactor),
           last_injected_at = @now
       WHERE id = @id
     `)
 
-    stmt.run({ id, now: Date.now() })
+    stmt.run({ id, minConfidence: MIN_CONFIDENCE, decayFactor: CONFIDENCE_DECAY_FACTOR, now: Date.now() })
   }
 
   /**
@@ -347,11 +362,11 @@ export class ExperienceStore {
   boostConfidence(id: string): void {
     const stmt = this.db.prepare(`
       UPDATE experiences
-      SET confidence = MIN(1.0, confidence + 0.2)
+      SET confidence = MIN(@maxConfidence, confidence + @boost)
       WHERE id = @id
     `)
 
-    stmt.run({ id })
+    stmt.run({ id, maxConfidence: MAX_CONFIDENCE, boost: CONFIDENCE_BOOST })
   }
 
   // -------------------------------------------------------------------------
@@ -377,16 +392,16 @@ export class ExperienceStore {
     const totalCount = this.count()
     const avgScore = this.stats().avgScore
     let coarseLimit: number
-    if (totalCount < 50) {
+    if (totalCount < SMALL_STORE_THRESHOLD) {
       // Small store: return everything for best signal
-      coarseLimit = Math.max(limit * 5, 50)
-    } else if (totalCount < 200) {
+      coarseLimit = Math.max(limit * 5, SMALL_STORE_THRESHOLD)
+    } else if (totalCount < MEDIUM_STORE_THRESHOLD) {
       // A6: When avg score is high, shrink candidate pool (fewer needed to find value)
       // When low, expand it (need more candidates to find something useful)
-      coarseLimit = avgScore > 0.7 ? 15 : 25
+      coarseLimit = avgScore > HIGH_QUALITY_THRESHOLD ? 15 : 25
     } else {
       // A6: Same principle at larger scale
-      coarseLimit = avgScore > 0.7 ? 40 : 60
+      coarseLimit = avgScore > HIGH_QUALITY_THRESHOLD ? 40 : 60
     }
 
     // Stage 1: Coarse filter
@@ -738,13 +753,13 @@ export class ExperienceStore {
             ORDER BY
               CASE WHEN difficulty = 'low' THEN 0 ELSE 1 END,
               CASE WHEN lesson IS NULL THEN 0 ELSE 1 END,
-              CASE WHEN outcome_score < 0.5 THEN 0 ELSE 1 END,
+              CASE WHEN outcome_score < @lowScore THEN 0 ELSE 1 END,
               CASE WHEN merged = 1 THEN 0 ELSE 1 END,
               outcome_score ASC,
               created_at ASC
             LIMIT @toEvict
           )
-        `).run({ toEvict })
+        `).run({ toEvict, lowScore: LOW_SCORE_GC_THRESHOLD })
 
         // If still over, evict lowest score
         const remainingOld = (this.db.prepare(
@@ -775,8 +790,10 @@ export class ExperienceStore {
       UPDATE experiences
       SET generation = 1
       WHERE generation = 0
-        AND (reuse_count >= 1 OR (outcome_score >= 0.8 AND lesson IS NOT NULL) OR merged = 1)
-    `).run()
+        AND (reuse_count >= @reuse
+          OR (outcome_score >= @score AND lesson IS NOT NULL)
+          OR merged = 1)
+    `).run({ reuse: PROMOTE_REUSE_THRESHOLD, score: PROMOTE_SCORE_THRESHOLD })
   }
 
   /**
@@ -1067,7 +1084,7 @@ export class ExperienceStore {
         toolsUsed: JSON.stringify(toolsUsed),
         workspaceDigest: null,
         actions: JSON.stringify({ merged_from: sourceIds }),
-        outcomeScore: 0.85,
+        outcomeScore: MERGED_OUTCOME_SCORE,
         userFeedback: 'none',
         lesson: JSON.stringify(mergedLesson),
         difficulty,
@@ -1267,16 +1284,16 @@ export class ExperienceStore {
       this.db.prepare(`
         UPDATE atomic_facts
         SET object = @object, source = @source, updated_at = @now,
-            confidence = MIN(1.0, confidence + 0.1)
+            confidence = MIN(@maxConfidence, confidence + @boost)
         WHERE id = @id
-      `).run({ object, source, now, id: existing.id })
+      `).run({ object, source, now, boost: FACT_CONFIDENCE_BOOST, maxConfidence: MAX_CONFIDENCE, id: existing.id })
       return existing.id
     }
 
     this.db.prepare(`
       INSERT INTO atomic_facts (id, subject, predicate, object, source, confidence, created_at)
       VALUES (@id, @subject, @predicate, @object, @source, @confidence, @createdAt)
-    `).run({ id, subject: cSubject, predicate: cPredicate, object, source, confidence: 0.5, createdAt: now })
+    `).run({ id, subject: cSubject, predicate: cPredicate, object, source, confidence: FACT_INITIAL_CONFIDENCE, createdAt: now })
 
     return id
   }

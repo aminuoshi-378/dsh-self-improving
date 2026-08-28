@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 改进 — 内部阈值整理为具名常量（2026-08-28）
+- 新增 `src/types/constants.ts`，把 Y1 未配化的内部算法阈值集中为具名常量，消灭散落的魔法数字：
+  - 评分/难度、反射上下限、原子事实/注入/boost 阈值、隐式反馈（重述相似度、最小词长、低价值工具数）
+  - 检索分档（小/中/大库 + 质量阈值，experience-store 与 behavior-adapter 共享）、偏好蒸馏阈值、confidence 调整因子、分代 GC 阈值
+- `incrementReuse`/`boostConfidence`/`upsertFact`/Major GC 排序/`promoteYoungGen` 中无法拼常量的位置改为 prepared statement 参数注入
+- `behavior-adapter.ts`（test fixture）的 `suggestModel` 与注入分档阈值为模块私有具名常量
+- 测试与构建：`pnpm test` 109 个测试通过，`pnpm run build` 通过
+
 ### 改进 — 硬编码参数配置化（2026-08-28）
 - 新增 7 个可配置项，替代源码中的魔法数字：
   - `maxInjectionChars`：每 turn 注入经验字符预算（默认 8000）

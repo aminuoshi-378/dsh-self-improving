@@ -6,6 +6,10 @@
  */
 
 import type { ExperienceRecord } from './types/index.js'
+import {
+  REFLECTION_SUCCESS_THRESHOLD,
+  REFLECTION_FAILURE_THRESHOLD,
+} from './types/constants.js'
 
 /**
  * M1: Normalize a tool entry from the actions JSON.
@@ -97,12 +101,12 @@ export function generateStructuredReflection(entry: {
   let whatToTryDifferently: string
   let reusableLesson: string
 
-  if (entry.outcomeScore >= 0.8) {
+  if (entry.outcomeScore >= REFLECTION_SUCCESS_THRESHOLD) {
     whatWorked = `Tool sequence [${toolNames.join(' → ')}]${stepInfo}${diffInfo} achieved a strong outcome (score: ${entry.outcomeScore.toFixed(2)})`
     whatFailed = 'No significant failures detected'
     whatToTryDifferently = 'Continue using this approach for similar tasks'
     reusableLesson = `For ${entry.difficulty ?? 'medium'} tasks, [${toolNames.join(' → ')}] is effective${stepInfo}`
-  } else if (entry.outcomeScore <= 0.3) {
+  } else if (entry.outcomeScore <= REFLECTION_FAILURE_THRESHOLD) {
     whatWorked = 'No clearly successful elements identified'
     whatFailed = failedTools.length > 0
       ? `Tools [${failedTools.join(', ')}] failed${stepInfo}${diffInfo} (score: ${entry.outcomeScore.toFixed(2)})`

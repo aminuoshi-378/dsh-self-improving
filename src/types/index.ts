@@ -8,6 +8,12 @@
  *   Layer 4 (Meta-Cognition)    → produces Reflection and updates ExperienceRecord
  */
 
+import {
+  STEP_EFFICIENCY_DECAY,
+  LOW_DIFFICULTY_MAX_STEPS,
+  MEDIUM_DIFFICULTY_MAX_STEPS,
+} from './constants.js'
+
 // ---------------------------------------------------------------------------
 // Layer 1: Outcome Evaluator
 // ---------------------------------------------------------------------------
@@ -175,7 +181,7 @@ export const MAX_OUTCOME_SCORE = 1.0
  */
 export function computeStepEfficiency(stepCount: number): number {
   if (stepCount <= 1) return 1.0
-  return Math.max(0, 1 - (stepCount - 1) * 0.05)
+  return Math.max(0, 1 - (stepCount - 1) * STEP_EFFICIENCY_DECAY)
 }
 
 /**
@@ -189,8 +195,8 @@ export function computeDifficulty(
   hasFailures: boolean,
 ): 'low' | 'medium' | 'high' {
   if (hasFailures) return 'high'
-  if (stepCount <= 2) return 'low'
-  if (stepCount <= 6) return 'medium'
+  if (stepCount <= LOW_DIFFICULTY_MAX_STEPS) return 'low'
+  if (stepCount <= MEDIUM_DIFFICULTY_MAX_STEPS) return 'medium'
   return 'high'
 }
 

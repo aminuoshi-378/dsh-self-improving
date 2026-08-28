@@ -709,8 +709,18 @@
 - `forgetScoreThreshold` / `forgetConfidenceThreshold`（默认 0.3 / 0.2）：主动遗忘阈值。
 - 实现：`Config` / `rulesSchema` 增加字段；`ExperienceStore` 增加 `StoreOptions`；`BehaviorAdapter` 增加 `BehaviorAdapterOptions`。
 
-### Y2 仍需整理的内部硬编码阈值 [ ]
-以下阈值仍硬编码在算法内部，当前不适合暴露给用户配置，但应整理为具名常量或枚举，避免魔法数字：
+### Y2 内部硬编码阈值整理为具名常量（集中 `src/types/constants.ts`）[x]
+- 已把 Y1 未配化的内部算法阈值全部提取为具名常量，集中放在 `src/types/constants.ts` 一处审计：
+  - 评分/难度：`STEP_EFFICIENCY_DECAY`、`LOW_DIFFICULTY_MAX_STEPS`、`MEDIUM_DIFFICULTY_MAX_STEPS`、`REFLECTION_SUCCESS_THRESHOLD`、`REFLECTION_FAILURE_THRESHOLD`
+  - 原子事实/注入/boost：`EFFECTIVE_FACT_SCORE_THRESHOLD`、`FAILED_FACT_SCORE_THRESHOLD`、`POSITIVE_OUTCOME_THRESHOLD`、`INJECTION_BEST_THRESHOLD`、`INJECTION_WORST_THRESHOLD`
+  - 隐式反馈：`TASK_RESTATED_SIMILARITY_THRESHOLD`、`MIN_WORD_LEN`、`LOW_VALUE_TOOL_MAX`
+  - 检索分档：`SMALL_STORE_THRESHOLD`、`MEDIUM_STORE_THRESHOLD`、`HIGH_QUALITY_THRESHOLD`（experience-store 与 behavior-adapter 共享）
+  - 偏好蒸馏：`MIN_TOTAL_FOR_DISTILL`、`POSITIVE_RATE_DISTILL_THRESHOLD`、`NEGATIVE_RATE_DISTILL_THRESHOLD`、`LOW_AVG_SCORE_THRESHOLD`、`HIGH_AVG_SCORE_THRESHOLD`、`PREFERENCE_CONFIDENCE_THRESHOLD`
+  - confidence/GC：`CONFIDENCE_DECAY_FACTOR`、`MIN_CONFIDENCE`、`CONFIDENCE_BOOST`、`MAX_CONFIDENCE`、`FACT_INITIAL_CONFIDENCE`、`FACT_CONFIDENCE_BOOST`、`PROMOTE_REUSE_THRESHOLD`、`PROMOTE_SCORE_THRESHOLD`、`LOW_SCORE_GC_THRESHOLD`、`MERGED_OUTCOME_SCORE`
+- SQL 中无法拼常量的位置（`incrementReuse`/`boostConfidence`/`upsertFact`/GC 排序/`promoteYoungGen`）改为 prepared statement 参数注入
+- `adaptivestrategy.ts` 的模型选择阈值原本已是具名常量，未改动；`behavior-adapter.ts` 属 test fixture，其 `suggestModel` 与注入分档阈值在本模块顶部定义
+
+以下为原清单（已全部落地，保留便于追溯）：
 
 #### 评分与难度（`src/types/index.ts`）
 - `SCORE_WEIGHTS` 各项权重（`goalProgress:0.3, toolSuccess:0.2, stepEfficiency:0.25, guardPenalty:0.15, userFeedback:0.1`）—— 当前是 const 对象，已是具名常量，无需改动。
@@ -742,10 +752,10 @@
 - 用户消息 word overlap 过滤：单词长度 `> 2` —— 适合 `MIN_WORD_LEN`。
 - 低价值 turn 过滤：`difficulty === 'low' && entry.tools.length <= 2` —— 适合 `LOW_VALUE_TOOL_MAX = 2`。
 
-### Y3 配置化验收标准 [ ]
-- [ ] Y2 中所有阈值提取为具名常量或枚举，魔法数字不再直接出现在 if/排序公式中。
-- [ ] 常量集中放在 `src/types/constants.ts` 或就近模块顶部，便于统一审计。
-- [ ] `pnpm run build` 与 `pnpm test` 通过。
+### Y3 配置化验收标准 [x]
+- [x] Y2 中所有阈值提取为具名常量，魔法数字不再直接出现在 if/排序公式中。
+- [x] 常量集中放在 `src/types/constants.ts`，便于统一审计。
+- [x] `pnpm run build` 与 `pnpm test` 通过（109 个测试）。
 
 ---
 

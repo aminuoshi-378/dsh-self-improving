@@ -23,6 +23,19 @@ import type {
   LearnedPreference,
 } from '../types/index.js'
 import { extractLessonText } from '../types/index.js'
+import {
+  SMALL_STORE_THRESHOLD,
+  MEDIUM_STORE_THRESHOLD,
+  HIGH_QUALITY_THRESHOLD,
+  PREFERENCE_CONFIDENCE_THRESHOLD,
+  MIN_TOTAL_FOR_DISTILL,
+  POSITIVE_RATE_DISTILL_THRESHOLD,
+  NEGATIVE_RATE_DISTILL_THRESHOLD,
+  LOW_AVG_SCORE_THRESHOLD,
+  HIGH_AVG_SCORE_THRESHOLD,
+  INJECTION_BEST_THRESHOLD,
+  INJECTION_WORST_THRESHOLD,
+} from '../types/constants.js'
 
 export interface BehaviorAdapterOptions {
   /** Maximum characters to inject per turn (4 chars ≈ 1 token). */
@@ -32,6 +45,18 @@ export interface BehaviorAdapterOptions {
 const DEFAULT_BEHAVIOR_ADAPTER_OPTIONS: Required<BehaviorAdapterOptions> = {
   maxInjectionChars: 8000,
 }
+
+// Injection limit by store size / quality (local to this fixture)
+const LIMIT_SMALL_STORE = 10
+const LIMIT_MEDIUM_HIGH_QUALITY = 8
+const LIMIT_MEDIUM_LOW_QUALITY = 12
+const LIMIT_LARGE_HIGH_QUALITY = 8
+const LIMIT_LARGE_LOW_QUALITY = 15
+
+// Model suggestion thresholds (local to this fixture)
+const SUGGEST_MODEL_MIN_SAMPLES = 5
+const SUGGEST_MODEL_STD_THRESHOLD = 0.8   // avg score >= this → standard model
+const SUGGEST_MODEL_STRONG_THRESHOLD = 0.5 // avg score < this → stronger model
 
 export class BehaviorAdapter {
   private store: ExperienceStore
@@ -111,12 +136,12 @@ export class BehaviorAdapter {
 
     // P4: Extract reusable_lesson from structured JSON lesson
     const whatWorked =
-      highest && highest.outcomeScore >= 0.6
+      highest && highest.outcomeScore >= INJECTION_BEST_THRESHOLD
         ? extractLessonText(highest.lesson) ?? this.deriveLesson(highest, 'success')
         : null
 
     const whatFailed =
-      lowest && lowest.outcomeScore <= 0.4
+      lowest && lowest.outcomeScore <= INJECTION_WORST_THRESHOLD
         ? extractLessonText(lowest.lesson) ?? this.deriveLesson(lowest, 'failure')
         : null
 
@@ -145,13 +170,13 @@ export class BehaviorAdapter {
    */
   private computeDynamicLimit(): number {
     const stats = this.store.stats()
-    if (stats.total < 50) return 10
+    if (stats.total < SMALL_STORE_THRESHOLD) return LIMIT_SMALL_STORE
     // A6: When average quality is high, shrink the candidate pool (fewer needed)
     // When quality is low, expand it (more candidates to find something useful)
-    if (stats.total < 200) {
-      return stats.avgScore > 0.7 ? 8 : 12
+    if (stats.total < MEDIUM_STORE_THRESHOLD) {
+      return stats.avgScore > HIGH_QUALITY_THRESHOLD ? LIMIT_MEDIUM_HIGH_QUALITY : LIMIT_MEDIUM_LOW_QUALITY
     }
-    return stats.avgScore > 0.7 ? 8 : 15
+    return stats.avgScore > HIGH_QUALITY_THRESHOLD ? LIMIT_LARGE_HIGH_QUALITY : LIMIT_LARGE_LOW_QUALITY
   }
 
   /**
@@ -217,7 +242,7 @@ export class BehaviorAdapter {
   getLearnedPreferences(): LearnedPreference[] {
     // Sort by confidence descending
     return Array.from(this.preferences.values())
-      .filter((p) => p.confidence > 0.3)
+      .filter((p) => p.confidence > PREFERENCE_CONFIDENCE_THRESHOLD)
       .sort((a, b) => b.confidence - a.confidence)
   }
 
@@ -266,21 +291,21 @@ export class BehaviorAdapter {
       minScore: 0.0,
     })
 
-    if (records.length < 5) {
+    if (records.length < SUGGEST_MODEL_MIN_SAMPLES) {
       // Not enough data to make a recommendation
       return null
     }
 
     const avgScore = records.reduce((sum, r) => sum + r.outcomeScore, 0) / records.length
 
-    if (avgScore >= 0.8) {
+    if (avgScore >= SUGGEST_MODEL_STD_THRESHOLD) {
       return {
         model: 'deepseek-chat',
         reason: `Historical avg score ${avgScore.toFixed(2)} for "${taskPattern}" — standard model sufficient`,
       }
     }
 
-    if (avgScore < 0.5) {
+    if (avgScore < SUGGEST_MODEL_STRONG_THRESHOLD) {
       return {
         model: 'deepseek-reasoner',
         reason: `Historical avg score ${avgScore.toFixed(2)} for "${taskPattern}" — stronger reasoning model recommended`,
@@ -303,12 +328,12 @@ export class BehaviorAdapter {
     const stats = this.store.stats()
 
     // Distill from feedback patterns
-    if (stats.total < 10) return // need minimum data
+    if (stats.total < MIN_TOTAL_FOR_DISTILL) return // need minimum data
 
     const positiveRate = stats.total > 0 ? stats.positiveCount / stats.total : 0
     const negativeRate = stats.total > 0 ? stats.negativeCount / stats.total : 0
 
-    if (positiveRate > 0.7) {
+    if (positiveRate > POSITIVE_RATE_DISTILL_THRESHOLD) {
       this.registerPreference(
         'feedback-pattern',
         'User tends to give positive feedback — current approach is working well',
@@ -316,7 +341,7 @@ export class BehaviorAdapter {
       )
     }
 
-    if (negativeRate > 0.3) {
+    if (negativeRate > NEGATIVE_RATE_DISTILL_THRESHOLD) {
       this.registerPreference(
         'feedback-warning',
         'User has been giving negative feedback frequently — consider adjusting approach',
@@ -325,13 +350,13 @@ export class BehaviorAdapter {
     }
 
     // Distill from average score
-    if (stats.avgScore < 0.4) {
+    if (stats.avgScore < LOW_AVG_SCORE_THRESHOLD) {
       this.registerPreference(
         'performance-warning',
         'Recent outcomes have low scores — consider more careful tool selection',
         1 - stats.avgScore,
       )
-    } else if (stats.avgScore > 0.8) {
+    } else if (stats.avgScore > HIGH_AVG_SCORE_THRESHOLD) {
       this.registerPreference(
         'performance-positive',
         'Recent outcomes have high scores — current approach is effective',
@@ -379,7 +404,7 @@ export class BehaviorAdapter {
     // Find the most common successful tool pattern
     const toolFreq = new Map<string, number>()
     for (const rec of records) {
-      if (rec.outcomeScore >= 0.6 && rec.toolsUsed) {
+      if (rec.outcomeScore >= INJECTION_BEST_THRESHOLD && rec.toolsUsed) {
         for (const tool of rec.toolsUsed) {
           toolFreq.set(tool, (toolFreq.get(tool) ?? 0) + 1)
         }
