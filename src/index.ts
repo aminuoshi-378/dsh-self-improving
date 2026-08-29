@@ -21,7 +21,7 @@ import { ulid } from 'ulid'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern, computeOutcomeScore } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome, CorrectionEvent } from './types/index.js'
-import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased } from './correction-detector.js'
+import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased, formatCorrectionAdvisory } from './correction-detector.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
 import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
@@ -393,12 +393,30 @@ export function apply(ctx: Context, config: Config): void {
     // 检测层：四分类（revert/redo/correction/interrupt）+ 节点定位 → 入库 →
     // 汇总成 correctionSignal 喂给评分层（替换粗粒度 implicitNegative 的纠正维度）。
     // redo 的正面价值通过 contrast lesson（见 lesson 提炼）学习，这里只做轻度扣分。
+    const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
     let correctionEvents: CorrectionEvent[] = []
     try {
       const events = agent.session.events ?? []
       correctionEvents = detectCorrectionEvents(events, turn, entry.tools, agent.id)
       if (correctionEvents.length > 0) {
-        store.storeCorrectionEvents(agent.id, `turn-${turn}`, correctionEvents)
+        store.storeCorrectionEvents(agent.id, `turn-${turn}`, correctionEvents, wsDigest)
+
+        // Δ7-2 redo 对比对：按本 turn 工具序列的内容指纹，对既有同序列经验做轻度打压，
+        // 降低被纠正/重做过的做法再次被注入的概率。用 store.computeContentHash 保证与
+        // experiences.content_hash 同源，避免 targetSeqHash(无 workspace) 对不上。
+        try {
+          const penalizeTypes = ['redo', 'revert', 'correction']
+          const seqHash = store.computeContentHash(JSON.stringify({ tools: entry.tools }), wsDigest)
+          if (seqHash && correctionEvents.some((e) => penalizeTypes.includes(e.type))) {
+            const affected = store.penalizeByContentHash(seqHash)
+            if (affected > 0) {
+              log(`redo对比对: penalized ${affected} experience(s) matching seq ${seqHash.slice(0, 8)}…`)
+            }
+          }
+        } catch (err) {
+          log(`redo对比对 error: ${(err as Error).message}`)
+        }
+
         log(`turn ${turn}: detected ${correctionEvents.length} correction event(s) [${correctionEvents.map(e => e.type).join(',')}]`)
       }
     } catch (err) {
@@ -461,7 +479,6 @@ export function apply(ctx: Context, config: Config): void {
       // 纠正事件摘要——供 lesson 提炼层（reflection）读取「用户拒绝/期望」上下文
       corrections: correctionEvents.map(e => ({ type: e.type, text: e.userText })),
     })
-    const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
 
     // P5: Infer task pattern from first user message
     let taskPattern: string | null = null
@@ -672,6 +689,28 @@ export function apply(ctx: Context, config: Config): void {
         // O2: next() called outside try — catch block returns decision instead of calling next() again
         const decision = await next()
 
+        // 本工作区内用户纠正过/重做过的做法——最高优先级避让（Δ7 按工作区精确注入）。
+        let correctionLines: string[] = []
+        try {
+          const wsCorr = store.queryCorrectionEvents(5, wsDigest)
+          correctionLines = wsCorr.length > 0 ? formatCorrectionAdvisory(wsCorr) : []
+        } catch { /* ignore */ }
+
+        // 无历史经验匹配、但确有本区纠正记录时，仍注入一条纠正避让（覆盖空经验场景）。
+        if (correctionLines.length > 0 && records.length === 0) {
+          try {
+            const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+            const text = ['## Corrections to Avoid (advisory)', '', ...correctionLines, '', 'These reflect what the user rejected earlier in this workspace. Do NOT repeat them.'].join('\n')
+            const context = createUserMessage({
+              content: [{ type: 'text', text }],
+              source: { ...PLUGIN_SOURCE, form: 'notice', summary: 'corrections to avoid' },
+            })
+            if (decision.kind === 'enter') {
+              return { ...decision, messages: [context, ...decision.messages] }
+            }
+          } catch { /* ignore */ }
+        }
+
         try {
           if (records.length > 0) {
           // P5: Sort by task pattern match, difficulty priority, then outcome score
@@ -728,6 +767,8 @@ export function apply(ctx: Context, config: Config): void {
           log(`injecting ${selected.length} past experiences into pre-step (best score ${best.outcomeScore.toFixed(2)})`)
 
           const lines: string[] = ['## Past Experience (advisory)', '']
+          // Δ7 按工作区避让：本区纠正过/重做过的做法置顶（黄金信号）。
+          if (correctionLines.length > 0) lines.push(...correctionLines, '')
           if (best.outcomeScore >= INJECTION_BEST_THRESHOLD) {
             const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
             lines.push(`- **What worked**: ${lesson}`)
@@ -868,11 +909,7 @@ export function apply(ctx: Context, config: Config): void {
           const corr = store.queryCorrectionEvents(5)
           if (corr.length > 0) {
             if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
-            lines.push('- User has rejected/corrected these approaches — do NOT repeat them:')
-            for (const c of corr) {
-              const tag = c.type === 'revert' ? 'reverted' : c.type === 'redo' ? 'redone' : c.type === 'interrupt' ? 'interrupted' : 'corrected'
-              lines.push(`  * ${tag}: ${(c.intent ?? c.userText).slice(0, 120)}`)
-            }
+            lines.push(...formatCorrectionAdvisory(corr))
             lines.push('')
           }
         } catch { /* ignore */ }

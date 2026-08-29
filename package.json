@@ -13,7 +13,7 @@
   "files": ["dist", "cordis.yml"],
   "scripts": {
     "build": "tsc",
-    "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts && tsx test/memory-benchmark.test.ts && tsx test/advanced-features.test.ts && tsx test/adaptive-strategy.test.ts && tsx test/event-parsing.test.ts",
+    "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts && tsx test/memory-benchmark.test.ts && tsx test/advanced-features.test.ts && tsx test/adaptive-strategy.test.ts && tsx test/event-parsing.test.ts && tsx test/correction.test.ts",
     "test:store": "tsx test/experience-store.test.ts",
     "test:evaluator": "tsx test/outcome-evaluator.test.ts",
     "test:adapter": "tsx test/behavior-adapter.test.ts",
@@ -22,6 +22,7 @@
     "test:advanced": "tsx test/advanced-features.test.ts",
     "test:adaptive": "tsx test/adaptive-strategy.test.ts",
     "test:event": "tsx test/event-parsing.test.ts",
+    "test:correction": "tsx test/correction.test.ts",
     "benchmark": "tsx benchmark/run-benchmark.ts",
     "pack": "pnpm run build && pnpm pack"
   },

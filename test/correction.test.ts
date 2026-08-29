@@ -13,6 +13,7 @@ import {
   detectCorrectionEvents,
   toCorrectionSignal,
   extractCorrectionIntentRuleBased,
+  formatCorrectionAdvisory,
 } from '../src/correction-detector.js'
 import { correctionPenalty, computeOutcomeScore, type CorrectionEvent } from '../src/types/index.js'
 import { ExperienceStore } from '../src/store/experience-store.js'
@@ -284,5 +285,79 @@ test('store.updateCorrectionIntent: 断言更新 intent 后可回读', () => {
 
 // ---------------------------------------------------------------------------
 
+console.log('\n--- Correction: Δ7 按工作区避让 + redo 对比对 ---')
+
+test('queryCorrectionEvents(workspaceDigest) 只返回指定工作区纠正', () => {
+  const store = new ExperienceStore(':memory:')
+  try {
+    store.storeCorrectionEvents('s1', 'turn-1', [{
+      id: 'w1', turnId: 'turn-1', sessionId: 's1', type: 'revert', seq: 1,
+      targetTool: null, targetSeqHash: null, userText: 'A', intent: null, severity: 'high', createdAt: 10,
+    }], 'ws-alpha')
+    store.storeCorrectionEvents('s2', 'turn-2', [{
+      id: 'w2', turnId: 'turn-2', sessionId: 's2', type: 'redo', seq: 1,
+      targetTool: null, targetSeqHash: null, userText: 'B', intent: null, severity: 'medium', createdAt: 20,
+    }], 'ws-beta')
+    assert(store.queryCorrectionEvents(10, 'ws-alpha').length === 1, 'ws-alpha 只 1 条')
+    assert(store.queryCorrectionEvents(10, 'ws-alpha')[0].id === 'w1', 'ws-alpha 命中 w1')
+    assert(store.queryCorrectionEvents(10, 'ws-beta').length === 1, 'ws-beta 只 1 条')
+    assert(store.queryCorrectionEvents(10, 'ws-none').length === 0, '未知工作区 0 条')
+  } finally {
+    store.close()
+  }
+})
+
+test('formatCorrectionAdvisory: 生成含标签与 (intent 优先/原话回退) 的避让行', () => {
+  const events: CorrectionEvent[] = [{
+    id: 'c1', turnId: 't', sessionId: 's', type: 'revert', seq: 1,
+    targetTool: null, targetSeqHash: null, userText: '别直接提交', intent: '用临时分支提交', severity: 'high', createdAt: 0,
+  }]
+  const lines = formatCorrectionAdvisory(events)
+  assert(lines[0].includes('do NOT repeat'), '首行避让提示')
+  assert(lines.some(l => l.includes('reverted') && l.includes('用临时分支提交')), 'intent 优先')
+})
+
+test('penalizeByContentHash: 对匹配 content_hash 的经验降置信度', () => {
+  const store = new ExperienceStore(':memory:')
+  try {
+    const id = store.store(
+      {
+        turnId: 'turn-1', sessionId: 'session-1', goalProgress: 'advanced',
+        toolCallCount: 2, toolSuccessRate: 0.8, guardTriggerCount: 0,
+        userFeedback: 'positive', outcomeScore: 0.7, stepEfficiency: 0.9,
+        difficulty: 'medium', timestamp: Date.now(),
+      },
+      {
+        taskPattern: 'git', toolsUsed: ['git_commit'], workspaceDigest: 'ws1',
+        actions: '{"tools":[{"name":"git_commit","success":true}]}',
+      },
+    )
+    const hash = store.getById(id)!.contentHash
+    assert(hash, 'contentHash 存在')
+    const before = store.queryExperiencesByContentHash(hash)
+    assert(before.length === 1 && before[0].confidence > 0.5, '查得到目标经验')
+
+    const affected = store.penalizeByContentHash(hash, 0.2)
+    assert(affected === 1, '打压 1 条')
+    const after = store.queryExperiencesByContentHash(hash)
+    assert(after[0].confidence < before[0].confidence, '置信度下降')
+  } finally {
+    store.close()
+  }
+})
+
+test('queryExperiencesByContentHash: 无匹配返回空', () => {
+  const store = new ExperienceStore(':memory:')
+  try {
+    assert(store.queryExperiencesByContentHash('no-such-hash').length === 0, '无匹配 → 空数组')
+    assert(store.penalizeByContentHash('', 0.1) === 0, '空 hash → 0 影响')
+  } finally {
+    store.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+
+console.log(`\n${passed} passed, ${failed} failed\n`)
 // Main entry：await 全部用例（含 Δ7.1 异步 LLM 提取）后汇总。
 await runAllTests()

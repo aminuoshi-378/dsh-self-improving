@@ -263,3 +263,17 @@ export function extractCorrectionIntentRuleBased(event: CorrectionEvent): string
     '用户纠正了做法'
   return `${typeHint}: ${text.slice(0, 140)}`
 }
+
+/**
+ * 注入层：把纠正事件格式化为「避让被纠正做法」的 advisory 行（供 pre-step 与
+ * systemPrompt.section 复用）。优先用提炼后的 intent，回退用用户原话。
+ */
+export function formatCorrectionAdvisory(events: CorrectionEvent[]): string[] {
+  const typeLabel: Record<CorrectionType, string> = {
+    revert: 'reverted', redo: 'redone', interrupt: 'interrupted', correction: 'corrected',
+  }
+  return [
+    '- User has rejected/corrected these approaches — do NOT repeat them:',
+    ...events.map(c => `  * ${typeLabel[c.type]}: ${(c.intent ?? c.userText).slice(0, 120)}`),
+  ]
+}

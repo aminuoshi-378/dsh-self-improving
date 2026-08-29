@@ -238,13 +238,16 @@ export class ExperienceStore {
         user_text TEXT,
         intent TEXT,
         severity TEXT NOT NULL DEFAULT 'medium',  -- high | medium | low
+        workspace_digest TEXT,
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_correction_turn ON correction_event(turn_id);
       CREATE INDEX IF NOT EXISTS idx_correction_type ON correction_event(type);
       CREATE INDEX IF NOT EXISTS idx_correction_seq_hash ON correction_event(target_seq_hash);
+      CREATE INDEX IF NOT EXISTS idx_correction_ws ON correction_event(workspace_digest);
     `)
     this.ensureColumnOn('correction_event', 'intent', 'TEXT')
+    this.ensureColumnOn('correction_event', 'workspace_digest', 'TEXT')
   }
 
   /** Add a column to the experiences table if it doesn't already exist (migration support). */
@@ -408,15 +411,20 @@ export class ExperienceStore {
   // -------------------------------------------------------------------------
 
   /** Insert correction events detected for a turn (idempotent by event id). */
-  storeCorrectionEvents(sessionId: string, turnId: string, events: CorrectionEvent[]): void {
+  storeCorrectionEvents(
+    sessionId: string,
+    turnId: string,
+    events: CorrectionEvent[],
+    workspaceDigest?: string | null,
+  ): void {
     if (!events || events.length === 0) return
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO correction_event (
         id, turn_id, session_id, type, seq, target_tool, target_seq_hash,
-        user_text, intent, severity, created_at
+        user_text, intent, severity, workspace_digest, created_at
       ) VALUES (
         @id, @turnId, @sessionId, @type, @seq, @targetTool, @targetSeqHash,
-        @userText, @intent, @severity, @createdAt
+        @userText, @intent, @severity, @workspaceDigest, @createdAt
       )
     `)
     const tx = this.db.transaction((rows: CorrectionEvent[]) => {
@@ -432,6 +440,7 @@ export class ExperienceStore {
           userText: e.userText,
           intent: e.intent,
           severity: e.severity,
+          workspaceDigest: workspaceDigest ?? null,
           createdAt: e.createdAt,
         })
       }
@@ -447,12 +456,39 @@ export class ExperienceStore {
     return rows.map(rowToCorrectionEvent)
   }
 
-  /** Read the most recent correction events across sessions (for injection). */
-  queryCorrectionEvents(limit: number = 10): CorrectionEvent[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM correction_event ORDER BY created_at DESC LIMIT ?',
-    ).all(limit) as RawCorrectionEventRow[]
+  /** Read the most recent correction events, optionally scoped to a workspace. */
+  queryCorrectionEvents(limit: number = 10, workspaceDigest?: string | null): CorrectionEvent[] {
+    const rows = workspaceDigest
+      ? this.db.prepare(
+          'SELECT * FROM correction_event WHERE workspace_digest = ? ORDER BY created_at DESC LIMIT ?',
+        ).all(workspaceDigest, limit) as RawCorrectionEventRow[]
+      : this.db.prepare(
+          'SELECT * FROM correction_event ORDER BY created_at DESC LIMIT ?',
+        ).all(limit) as RawCorrectionEventRow[]
     return rows.map(rowToCorrectionEvent)
+  }
+
+  /**
+   * Δ7-2 redo 对比对：按工具序列内容指纹反查此前被「重做」的经验。
+   * 用于把用户明确想重做的那条经验列出来（对比、打压倾向）。
+   */
+  queryExperiencesByContentHash(seqHash: string, limit: number = 5): ExperienceRecord[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM experiences WHERE content_hash = ? ORDER BY created_at DESC LIMIT ?',
+    ).all(seqHash, limit) as RawExperienceRow[]
+    return rows.map((r) => this.rowToRecord(r))
+  }
+
+  /**
+   * Δ7-2 redo 对比对：对与目标序列指纹相同的既有经验做轻度「打压」（降置信度），
+   * 使被用户纠正/重做过的做法更不容易被再次注入。返回受影响条数。
+   */
+  penalizeByContentHash(seqHash: string, delta: number = 0.05): number {
+    if (!seqHash) return 0
+    const result = this.db.prepare(
+      'UPDATE experiences SET confidence = MAX(?, confidence - ?) WHERE content_hash = ? AND merged = 0',
+    ).run(MIN_CONFIDENCE, delta, seqHash)
+    return result.changes
   }
 
   /** Δ7.1: persist LLM/rule-based extracted intent for a correction event. */

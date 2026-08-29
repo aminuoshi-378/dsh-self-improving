@@ -1391,7 +1391,8 @@
 - systemPrompt 注入优先用提炼后的 intent，回退用原话。
 - 测试新增 4 例（规则回退含类型提示/空文本、无 LLM 返回 null、updateCorrectionIntent 持久化往返）。
 
-### Δ7 未尽事项（待用户决策 / 后续）[ ]
-- **按工作区纠正避让**：correction_event 未存 workspace_digest，systemPrompt 全局注入是最优可行简化；如需按工作区精确避让需加字段（可复用 wsDigest 落库）。
-- **redo 对比对**：redo 事件未单独对比 targetSeqHash 反查经验；当前靠 severity medium 轻度扣分 + lesson 提炼承载正价值。
+### Δ7 未尽事项（已完成）[x]
+- **按工作区纠正避让**：`correction_event` 新增 `workspace_digest` + `idx_correction_ws`，`queryCorrectionEvents` 按工作区过滤，pre-step 仅注入当前工作区纠正避让段。
+- **redo 对比对**：新增 `store.penalizeByContentHash`，对 redo/revert/correction 命中同 `content_hash` 的经验降置信度，`index.ts` 用 `store.computeContentHash` 计算当前序列指纹触发打压。
+- 测试：correction.test.ts 增至 24 例并纳入 `pnpm test` 回归链，全链 133 例全绿，`pnpm run build` 通过。
 

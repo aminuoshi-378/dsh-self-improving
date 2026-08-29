@@ -21,8 +21,14 @@
 * **提炼层**：`buildLessonPrompt`/`generateStructuredReflection` 透传 `correction` 上下文，rule-based 有纠正时 lesson 强沉淀「用户拒绝的做法 + 期望替代」。
 
 - **注入层**：systemPrompt.section 注入最近纠正摘要（reverted/redone/interrupted/corrected 标签），提醒模型主动规避被纠正的做法。
+
 - **Δ7.1 intent 语义提炼**：`llm-bridge.extractCorrectionIntent`（LLM 提炼「拒绝的做法+期望替代」，按输入语言回复）+ `correction-detector.extractCorrectionIntentRuleBased`（规则回退，`类型提示: 原话`）；`runMaintenance` 异步补全 `intent=null` 的纠正事件并 `store.updateCorrectionIntent` 持久化；systemPrompt 注入优先用提炼后的 intent。
-- 测试与构建：`test/correction.test.ts` 增至 20 例（新增 intent 提炼 + updateCorrectionIntent），run-all 109 + event-parsing 9 + adaptive-strategy 11 全绿无回归，`pnpm run build` 通过。
+
+* **Δ7.2 按工作区纠正避让**：`correction_event` 表新增 `workspace_digest` 字段（复用 `wsDigest`）+ `idx_correction_ws` 索引；`queryCorrectionEvents` 支持按工作区过滤，pre-step 仅注入**当前工作区**的最近纠正避让段，避免跨工作区误避让；`storeCorrectionEvents` 落库时带入 `wsDigest`。
+
+- **Δ7.3 redo 对比对**：`store.penalizeByContentHash` 对 redo/revert/correction 事件命中的同 `content_hash` 工具序列经验降置信度（`MAX(MIN_CONFIDENCE, confidence - delta)`），降低已纠正/重做的做法被再次注入概率；`index.ts` 用 `store.computeContentHash` 计算当前工具序列指纹（保证与经验库 `content_hash` 同源兼容）触发打压。
+
+* 测试与构建：`test/correction.test.ts` 增至 24 例（新增 Δ7.2 工作区过滤 + formatCorrectionAdvisory、Δ7.3 penalizeByContentHash/queryExperiencesByContentHash），并纳入 `pnpm test` 回归链；全链 133 例全绿无回归，`pnpm run build` 通过。
 
 ### 改进 — 内部阈值整理为具名常量（2026-08-28）
 
