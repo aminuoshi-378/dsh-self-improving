@@ -1,7 +1,8 @@
 {
   "name": "dsh-self-improving",
   "version": "0.1.0",
-  "description": "A self-improving learning layer for DeepSeek Harness",
+  "description": "Self-improving cross-session learning plugin (dsh-plugin) for DeepSeek Harness (dsh) — learns from past experience and injects relevant memories into each new task",
+  "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "self-improving", "agent-memory", "learning"],
   "type": "module",
   "main": "dist/index.js",
   "exports": {
