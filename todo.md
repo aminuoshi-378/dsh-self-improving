@@ -1271,7 +1271,7 @@
 
   * `store stats — withLessons=1` → lesson 已落库，E2 去重正常（单条无重复）
 
-* **数据库层确认**（直查 `C:\Users\XH\.dsh\experiences.db`，2026-08-26）：
+* **数据库层确认**（直查 `~/.dsh/experiences.db`，2026-08-26）：
 
   * `total = 2, with_lesson = 2` → 两条经验均带 lesson，全部持久化成功
 
