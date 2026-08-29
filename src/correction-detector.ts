@@ -247,3 +247,19 @@ export function toCorrectionSignal(events: CorrectionEvent[]): {
   }
   return { count: events.length, severity: highest }
 }
+
+/**
+ * Δ7.1: Rule-based correction intent fallback — when LLM is unavailable.
+ * The user's correction text itself is already a short directive, so the
+ * fallback keeps it as-is (trimmed) with a type hint for downstream injection.
+ */
+export function extractCorrectionIntentRuleBased(event: CorrectionEvent): string {
+  const text = event.userText?.trim()
+  if (!text) return ''
+  const typeHint =
+    event.type === 'revert' ? '用户要求撤销/回退' :
+    event.type === 'redo' ? '用户要求重做/换方式' :
+    event.type === 'interrupt' ? '用户打断并重新表述' :
+    '用户纠正了做法'
+  return `${typeHint}: ${text.slice(0, 140)}`
+}

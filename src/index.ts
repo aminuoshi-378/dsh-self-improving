@@ -21,9 +21,9 @@ import { ulid } from 'ulid'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern, computeOutcomeScore } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome, CorrectionEvent } from './types/index.js'
-import { detectCorrectionEvents, toCorrectionSignal } from './correction-detector.js'
+import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased } from './correction-detector.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
-import { tryLLMComplete, llmMergeLessons } from './llm-bridge.js'
+import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
 import { selectModel, guardTool } from './adaptive-strategy.js'
 import {
@@ -871,7 +871,7 @@ export function apply(ctx: Context, config: Config): void {
             lines.push('- User has rejected/corrected these approaches — do NOT repeat them:')
             for (const c of corr) {
               const tag = c.type === 'revert' ? 'reverted' : c.type === 'redo' ? 'redone' : c.type === 'interrupt' ? 'interrupted' : 'corrected'
-              lines.push(`  * ${tag}: ${c.userText.slice(0, 120)}`)
+              lines.push(`  * ${tag}: ${(c.intent ?? c.userText).slice(0, 120)}`)
             }
             lines.push('')
           }
@@ -979,6 +979,23 @@ export function apply(ctx: Context, config: Config): void {
         }
         log(`J7: boosted ${entry.injectedIds.length} injected experiences (positive outcome)`)
       }
+    }
+
+    // Δ7.1: Correction intent semantic refinement (LLM, fallback rule-based).
+    // 在异步 runMaintenance 里补全检测阶段无 provider 上下文无法做的 intent 提炼。
+    try {
+      const pendingCorrections = store.queryCorrectionEvents(20).filter(e => !e.intent)
+      if (pendingCorrections.length > 0) {
+        log(`Δ7.1 refining ${pendingCorrections.length} correction intent(s) ${llmModel ? 'via LLM' : 'via rule-based fallback'}`)
+        for (const ev of pendingCorrections) {
+          let intent: string | null = null
+          if (llmModel) intent = await extractCorrectionIntent(ctx, ev.userText, llmModel)
+          if (!intent) intent = extractCorrectionIntentRuleBased(ev)
+          if (intent) store.updateCorrectionIntent(ev.id, intent)
+        }
+      }
+    } catch (err) {
+      log(`Δ7.1 correction intent refinement error: ${(err as Error).message}`)
     }
 
     // J2: Detect and resolve atomic fact conflicts

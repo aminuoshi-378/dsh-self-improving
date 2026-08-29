@@ -128,3 +128,32 @@ Respond with ONLY valid JSON, no markdown fences:
   }
   return ruleBasedFallback(records)
 }
+
+/**
+ * Δ7.1: LLM-based correction intent extraction — turn the user's short correction
+ * text into an expected-alternative directive. Returns null when LLM unavailable
+ * (caller falls back to rule-based via extractCorrectionIntentRuleBased).
+ */
+export async function extractCorrectionIntent(
+  ctx: any,
+  userText: string,
+  model?: { provider: string; model: string },
+): Promise<string | null> {
+  const prompt = `You extract a user's correction intent from a short correction message in an AI-agent session.
+
+Goal: capture BOTH what the user does NOT accept AND the expected alternative direction, in one concise sentence. Reply in the same language as the input (Chinese if the input is Chinese).
+
+## User correction message
+${userText}
+
+## Output
+Respond with ONLY one concise sentence describing the expected alternative (the corrected direction). No labels, no JSON, no markdown.`
+  const response = await tryLLMComplete(ctx, prompt, model)
+  if (!response) return null
+  const cleaned = response
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+  return cleaned.replace(/^["'“‘]|["'”’]+$/g, '').slice(0, 160) || null
+}

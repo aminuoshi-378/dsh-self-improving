@@ -455,6 +455,11 @@ export class ExperienceStore {
     return rows.map(rowToCorrectionEvent)
   }
 
+  /** Δ7.1: persist LLM/rule-based extracted intent for a correction event. */
+  updateCorrectionIntent(eventId: string, intent: string): void {
+    this.db.prepare('UPDATE correction_event SET intent = ? WHERE id = ?').run(intent, eventId)
+  }
+
   // -------------------------------------------------------------------------
   // Read operations
   // -------------------------------------------------------------------------

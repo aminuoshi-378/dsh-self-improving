@@ -12,10 +12,12 @@ import {
   detectInterrupt,
   detectCorrectionEvents,
   toCorrectionSignal,
+  extractCorrectionIntentRuleBased,
 } from '../src/correction-detector.js'
 import { correctionPenalty, computeOutcomeScore, type CorrectionEvent } from '../src/types/index.js'
 import { ExperienceStore } from '../src/store/experience-store.js'
 import { generateStructuredReflection } from '../src/reflection.js'
+import { extractCorrectionIntent } from '../src/llm-bridge.js'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`ASSERT FAILED: ${message}`)
@@ -24,16 +26,26 @@ function assert(condition: boolean, message: string): void {
 let passed = 0
 let failed = 0
 
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    passed++
-    console.log(`  ✓ ${name}`)
-  } catch (err) {
-    failed++
-    console.error(`  ✗ ${name}`)
-    console.error(`    ${(err as Error).message}`)
+const registeredTests: { name: string; fn: () => void | Promise<void> }[] = []
+
+function test(name: string, fn: () => void | Promise<void>): void {
+  registeredTests.push({ name, fn })
+}
+
+async function runAllTests(): Promise<void> {
+  for (const t of registeredTests) {
+    try {
+      await t.fn()
+      passed++
+      console.log(`  ✓ ${t.name}`)
+    } catch (err) {
+      failed++
+      console.error(`  ✗ ${t.name}`)
+      console.error(`    ${(err as Error).message}`)
+    }
   }
+  console.log(`\n${passed} passed, ${failed} failed\n`)
+  if (failed > 0) process.exit(1)
 }
 
 function makeTurn(turn: number, userTexts: string[], aborted = false): any[] {
@@ -227,5 +239,50 @@ test('generateStructuredReflection 带纠正 → reusableLesson 强调避让', (
 
 // ---------------------------------------------------------------------------
 
-console.log(`\n${passed} passed, ${failed} failed\n`)
-if (failed > 0) process.exit(1)
+console.log('\n--- Correction: Δ7.1 intent 语义提炼 ---')
+
+test('extractCorrectionIntentRuleBased: 类型提示 + 用户原话', () => {
+  const ev: CorrectionEvent = {
+    id: 'c', turnId: 't', sessionId: 's', type: 'revert', seq: 1,
+    targetTool: null, targetSeqHash: null, userText: '撤销，不要生成代码', intent: null, severity: 'high', createdAt: 0,
+  }
+  const intent = extractCorrectionIntentRuleBased(ev)
+  assert(intent.includes('撤销'), '含类型提示')
+  assert(intent.includes('不要生成代码'), '含用户原话')
+})
+
+test('extractCorrectionIntentRuleBased: 空文本返回空串', () => {
+  const ev: CorrectionEvent = {
+    id: 'c', turnId: 't', sessionId: 's', type: 'interrupt', seq: 1,
+    targetTool: null, targetSeqHash: null, userText: '  ', intent: null, severity: 'medium', createdAt: 0,
+  }
+  assert(extractCorrectionIntentRuleBased(ev) === '', '空文本 → 空串')
+})
+
+test('extractCorrectionIntent: LLM 不可用时返回 null（触发规则回退）', async () => {
+  const ctx = { get: () => undefined } // 无 llm → null
+  const created = await extractCorrectionIntent(ctx, '撤销刚才的改动', undefined)
+  assert(created === null, '无 LLM 返回 null')
+})
+
+test('store.updateCorrectionIntent: 断言更新 intent 后可回读', () => {
+  const store = new ExperienceStore(':memory:')
+  try {
+    store.storeCorrectionEvents('s', 'turn-9', [{
+      id: 'corr-9', turnId: 'turn-9', sessionId: 's', type: 'redo', seq: 2,
+      targetTool: null, targetSeqHash: null, userText: '换个方式', intent: null, severity: 'medium', createdAt: 1,
+    }])
+    let loaded = store.queryCorrectionEventsByTurn('turn-9')
+    assert(!loaded[0].intent, '初始 intent 为 null')
+    store.updateCorrectionIntent('corr-9', '用户要求重做/换方式: 换个方式')
+    loaded = store.queryCorrectionEventsByTurn('turn-9')
+    assert(loaded[0].intent === '用户要求重做/换方式: 换个方式', 'intent 持久化可读')
+  } finally {
+    store.close()
+  }
+})
+
+// ---------------------------------------------------------------------------
+
+// Main entry：await 全部用例（含 Δ7.1 异步 LLM 提取）后汇总。
+await runAllTests()
