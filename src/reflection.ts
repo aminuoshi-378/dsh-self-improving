@@ -57,6 +57,7 @@ export function buildLessonPrompt(entry: {
   toolsUsed: string[]
   stepCount?: number
   difficulty?: 'low' | 'medium' | 'high'
+  correction?: string | null
 }): string {
   const { toolNames, failedTools } = extractToolInfo(entry.actions, entry.toolsUsed)
 
@@ -69,9 +70,11 @@ export function buildLessonPrompt(entry: {
 - Difficulty: ${entry.difficulty ?? 'medium'}
 - Outcome score: ${entry.outcomeScore.toFixed(2)}
 - User feedback: ${entry.userFeedback}
+${entry.correction ? `- User corrections (golden signal): ${entry.correction}` : ''}
 
 ## Task
 Produce a concise, actionable lesson from this turn. Focus on what specifically worked or failed, not generic advice.
+If the user corrected or rejected an approach, the lesson MUST capture what the user does not accept and the expected alternative — this is the single most important signal.
 
 ## Output Format
 Respond with ONLY valid JSON, no markdown fences:
@@ -86,6 +89,7 @@ export function generateStructuredReflection(entry: {
   toolsUsed: string[]
   stepCount?: number
   difficulty?: 'low' | 'medium' | 'high'
+  correction?: string | null
 }): {
   whatWorked: string
   whatFailed: string
@@ -96,12 +100,21 @@ export function generateStructuredReflection(entry: {
   const stepInfo = entry.stepCount ? ` in ${entry.stepCount} steps` : ''
   const diffInfo = entry.difficulty ? ` (difficulty: ${entry.difficulty})` : ''
 
+  // 纠正上下文（黄金信号）：一旦用户纠正/回退/重做，优先沉淀「用户不接受的方案+期望」。
+  const correctionCtx = entry.correction?.trim()
+  const hasCorrection = !!correctionCtx
+
   let whatWorked: string
   let whatFailed: string
   let whatToTryDifferently: string
   let reusableLesson: string
 
-  if (entry.outcomeScore >= REFLECTION_SUCCESS_THRESHOLD) {
+  if (correctionCtx) {
+    whatWorked = hasCorrection ? 'Approach aligned before the user intervened' : ''
+    whatFailed = `User corrected/rejected the approach: ${correctionCtx}`
+    whatToTryDifferently = 'Follow the user\'s expected alternative; do not repeat the corrected/rejected approach'
+    reusableLesson = `User rejected [${toolNames.join(' → ')}] (${correctionCtx}) — avoid this approach; follow the user's stated alternative`
+  } else if (entry.outcomeScore >= REFLECTION_SUCCESS_THRESHOLD) {
     whatWorked = `Tool sequence [${toolNames.join(' → ')}]${stepInfo}${diffInfo} achieved a strong outcome (score: ${entry.outcomeScore.toFixed(2)})`
     whatFailed = 'No significant failures detected'
     whatToTryDifferently = 'Continue using this approach for similar tasks'

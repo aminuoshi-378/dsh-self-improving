@@ -20,6 +20,9 @@ import type {
   TurnOutcome,
   Reflection,
   ExportedExperience,
+  CorrectionEvent,
+  CorrectionType,
+  CorrectionSeverity,
 } from '../types/index.js'
 import { isValidImportedExperience } from '../types/index.js'
 import {
@@ -219,6 +222,29 @@ export class ExperienceStore {
         VALUES (new.rowid, new.subject, new.object);
       END;
     `)
+
+    // Correction events — 重构计划：以「用户纠正」为黄金信号。
+    // 独立表保存结构化的纠正事件（节点定位），供检测/评分/提炼/注入四层共用，
+    // 并通过 target_seq_hash 反查对应经验（用于「打压」而非仅学习）。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS correction_event (
+        id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        type TEXT NOT NULL,               -- 'correction' | 'revert' | 'redo' | 'interrupt'
+        seq INTEGER NOT NULL DEFAULT 0,
+        target_tool TEXT,
+        target_seq_hash TEXT,
+        user_text TEXT,
+        intent TEXT,
+        severity TEXT NOT NULL DEFAULT 'medium',  -- high | medium | low
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_correction_turn ON correction_event(turn_id);
+      CREATE INDEX IF NOT EXISTS idx_correction_type ON correction_event(type);
+      CREATE INDEX IF NOT EXISTS idx_correction_seq_hash ON correction_event(target_seq_hash);
+    `)
+    this.ensureColumnOn('correction_event', 'intent', 'TEXT')
   }
 
   /** Add a column to the experiences table if it doesn't already exist (migration support). */
@@ -226,6 +252,14 @@ export class ExperienceStore {
     const cols = this.db.prepare('PRAGMA table_info(experiences)').all() as { name: string }[]
     if (!cols.some((c) => c.name === columnName)) {
       this.db.exec(`ALTER TABLE experiences ADD COLUMN ${columnName} ${definition}`)
+    }
+  }
+
+  /** Add a column to an arbitrary table if it doesn't already exist (migration support). */
+  private ensureColumnOn(tableName: string, columnName: string, definition: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as { name: string }[]
+    if (!cols.some((c) => c.name === columnName)) {
+      this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`)
     }
   }
 
@@ -367,6 +401,58 @@ export class ExperienceStore {
     `)
 
     stmt.run({ id, maxConfidence: MAX_CONFIDENCE, boost: CONFIDENCE_BOOST })
+  }
+
+  // -------------------------------------------------------------------------
+  // Correction events (重构计划：以「用户纠正」为黄金信号)
+  // -------------------------------------------------------------------------
+
+  /** Insert correction events detected for a turn (idempotent by event id). */
+  storeCorrectionEvents(sessionId: string, turnId: string, events: CorrectionEvent[]): void {
+    if (!events || events.length === 0) return
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO correction_event (
+        id, turn_id, session_id, type, seq, target_tool, target_seq_hash,
+        user_text, intent, severity, created_at
+      ) VALUES (
+        @id, @turnId, @sessionId, @type, @seq, @targetTool, @targetSeqHash,
+        @userText, @intent, @severity, @createdAt
+      )
+    `)
+    const tx = this.db.transaction((rows: CorrectionEvent[]) => {
+      for (const e of rows) {
+        stmt.run({
+          id: e.id,
+          turnId: e.turnId ?? turnId,
+          sessionId: e.sessionId ?? sessionId,
+          type: e.type,
+          seq: e.seq,
+          targetTool: e.targetTool,
+          targetSeqHash: e.targetSeqHash,
+          userText: e.userText,
+          intent: e.intent,
+          severity: e.severity,
+          createdAt: e.createdAt,
+        })
+      }
+    })
+    tx(events)
+  }
+
+  /** Read correction events for a turn (lesson / refinement context). */
+  queryCorrectionEventsByTurn(turnId: string): CorrectionEvent[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM correction_event WHERE turn_id = ? ORDER BY seq ASC',
+    ).all(turnId) as RawCorrectionEventRow[]
+    return rows.map(rowToCorrectionEvent)
+  }
+
+  /** Read the most recent correction events across sessions (for injection). */
+  queryCorrectionEvents(limit: number = 10): CorrectionEvent[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM correction_event ORDER BY created_at DESC LIMIT ?',
+    ).all(limit) as RawCorrectionEventRow[]
+    return rows.map(rowToCorrectionEvent)
   }
 
   // -------------------------------------------------------------------------
@@ -1443,6 +1529,7 @@ export class ExperienceStore {
   clear(): void {
     this.db.exec('DELETE FROM experiences')
     this.db.exec('DELETE FROM atomic_facts')
+    this.db.exec('DELETE FROM correction_event')
     // P6: Rebuild FTS tables to remove stale index entries
     try {
       this.db.exec(`INSERT INTO experiences_fts(experiences_fts) VALUES('rebuild')`)
@@ -1475,6 +1562,36 @@ interface RawExperienceRow {
   confidence: number
   reuse_count: number
   source: string
+}
+
+interface RawCorrectionEventRow {
+  id: string
+  turn_id: string
+  session_id: string
+  type: CorrectionType
+  seq: number
+  target_tool: string | null
+  target_seq_hash: string | null
+  user_text: string
+  intent: string | null
+  severity: CorrectionSeverity
+  created_at: number
+}
+
+function rowToCorrectionEvent(r: RawCorrectionEventRow): CorrectionEvent {
+  return {
+    id: r.id,
+    turnId: r.turn_id,
+    sessionId: r.session_id,
+    type: r.type,
+    seq: r.seq,
+    targetTool: r.target_tool,
+    targetSeqHash: r.target_seq_hash,
+    userText: r.user_text,
+    intent: r.intent,
+    severity: r.severity,
+    createdAt: r.created_at,
+  }
 }
 
 // B1: Source weight ranking — higher = more authoritative

@@ -849,3 +849,50 @@
 - WebUI 里 Experiences 面板 **stats 是否显示 `Total = 2`**？（空 → 桥接彻底断=R1/R2；正常 → 聚焦 export 专用通道）
 - 点 Export 后终端是否打印 `GUI export — sent 2 records`？（sent 2 但前端仍空 → R2 读侧不通；不打印 → R1/R3）
 - 三者组合可把 R1–R4 收敛到唯一根因，再动手修
+
+---
+
+## 域 Δ（Delta）— 以「用户纠正」为黄金信号（2026-08-29）
+
+> 来源：复仇者——dsh-self-improving 详细计划书。目标：把「用户主动纠正」从被忽略的噪声升级为体验系统最高优先级黄金信号。
+
+### Δ0 通读计划书与现有实现映射 [x]
+- 计划术语 ↔ 现有实现：四层架构（检测/评分/提炼/注入）、`correction_event` 数据模型、四分类（correction/revert/redo/interrupt）、节点定位、评分扣分、LLM intent 提炼 + 规则 fallback。
+
+### Δ1 检测层 + 数据模型 [x]
+- 新增 `src/correction-detector.ts`：纯函数、确定性、零成本，复用 `agent.session.events` 序列分析。
+  - `classifyCorrectionText`：中英文关键词四分类（优先级 correction > revert > redo）。
+  - `correctionTypeSeverity` / `computeTargetSeqHash`（sha1 内容指纹，与 experience contentHash 同源）。
+  - `detectInterrupt`：turn 被主动中断（reason.kind=aborted）+ 用户重输 → interrupt 事件。
+  - `detectCorrectionEvents`：主入口，第 2 条起用户消息逐条四分类 + 节点定位 + interrupt。
+  - `toCorrectionSignal`：C 事件 → 评分层信号 `{count, severity}`。
+- `src/types/index.ts`：新增 `CorrectionType`/`CorrectionSeverity`/`CorrectionEvent`/`CorrectionSignal` + `correctionPenalty`/`correctionSeverityWeight`。
+- `src/store/experience-store.ts`：新增 `correction_event` 表（CREATE + 三索引 + `ensureColumnOn('intent')` 迁移）。
+
+### Δ2 存储 CRUD [x]
+- `storeCorrectionEvents(sessionId, turnId, events)`：幂等 INSERT OR REPLACE + 事务。
+- `queryCorrectionEventsByTurn(turnId)` / `queryCorrectionEvents(limit)`。
+- `clear()` 同步清理 correction_event（测试友好）。
+
+### Δ3 评分层接入（替换 implicitNegative 的纠正维度）[x]
+- `computeOutcomeScore` 新增可选 `correctionSignal`，`correctionPenalty` 按严重度扣分。
+- turn-stopping：检测 → 入库 → `toCorrectionSignal` → 喂给评分；任一纠正即 expSource='tool-derived'。
+- redo 严重度 medium（轻度扣分），正面价值走 contrast lesson 不靠暴力扣分。
+
+### Δ4 提炼层接入纠正上下文 [x]
+- `buildLessonPrompt` / `generateStructuredReflection` 透传 `correction`，有纠正时 lesson 强沉淀「用户拒绝的做法 + 期望替代」。
+- `PendingReflection` 增加 `correction` 字段，turn-stopping 把纠正文本摘要（`[type] text | ...`）传入。
+
+### Δ5 注入层接入纠正避让 [x]
+- systemPrompt.section 注入最近 5 条纠正摘要（reverted/redone/interrupted/corrected 标签），提醒模型主动规避。
+- 纠正 lesson 作为 tool-derived 经验自然流入 pre-step「What failed」注入 → 端到端避让闭环。
+
+### Δ6 测试与构建 [x]
+- 新增 `test/correction.test.ts` 16 个用例（四分类/severity/节点定位/interrupt/signal 汇总/扣分/CRUD/lesson 上下文）。
+- 既有 105（run-all）+ event-parsing 9 + adaptive-strategy 11 全绿无回归。
+- `pnpm run build` 通过。
+
+### Δ7 未尽事项（待用户决策 / 后续）[ ]
+- **intent 语义提炼（LLM）**：`CorrectionEvent.intent` 目前恒 null，计划书要求 LLM 提炼「纠正意图/替代方向」+ 规则 fallback —— 当前未接 LLM（受制于 turn-stopping 无 agent/provider 上下文，可放 run-maintenance 异步补）。已留字段与注释。
+- **pre-step 按工作区纠正避让**：correction_event 未存 workspace_digest，systemPrompt 全局注入是最优可行简化；如需按工作区精确避让需加字段（可复用 wsDigest 落库）。
+- **redo 对比对**：redo 事件未单独对比 targetSeqHash 反查经验；当前靠 severity medium 轻度扣分 + lesson 提炼承载正价值。

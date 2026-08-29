@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### 重构 — 以「用户纠正」为黄金信号（2026-08-29）
+- 四层架构升级：检测层新增 `src/correction-detector.ts`，评分层接入 `correctionSignal`，提炼层 lesson 接入纠正上下文，注入层 systemPrompt 注入纠正避让。
+- **检测层**：新增纯函数 `detectCorrectionEvents` / `detectInterrupt`，对 turn 内用户消息做四分类（`revert`/`redo`/`correction`/`interrupt`，中英文关键词词表）+ 节点定位（`targetTool`/`targetSeqHash`，sha1 内容指纹）。
+- **数据模型**：新增 `correction_event` 表（`experience-store.ts` initSchema + `ensureColumnOn` 迁移），含 `id/turn_id/session_id/type/seq/target_tool/target_seq_hash/user_text/intent/severity/created_at` 字段与三索引。
+- **存储 CRUD**：`storeCorrectionEvents`（幂等 INSERT OR REPLACE）/`queryCorrectionEventsByTurn`/`queryCorrectionEvents`；`clear()` 同步清理 correction_event。
+- **评分层**：`computeOutcomeScore` 新增可选 `correctionSignal` 维度，`correctionPenalty`/`correctionSeverityWeight` 按严重度扣分（revert/correction 强、redo/interrupt 弱）。turn-stopping 检测→入库→`toCorrectionSignal`→喂给评分，替换粗粒度 `implicitNegative` 的纠正维度；任一纠正即令 expSource 升为 `tool-derived`。
+- **提炼层**：`buildLessonPrompt`/`generateStructuredReflection` 透传 `correction` 上下文，rule-based 有纠正时 lesson 强沉淀「用户拒绝的做法 + 期望替代」。
+- **注入层**：systemPrompt.section 注入最近纠正摘要（reverted/redone/interrupted/corrected 标签），提醒模型主动规避被纠正的做法。
+- 测试与构建：新增 `test/correction.test.ts` 16 个用例，既有 105 个（run-all）+ event-parsing 9 + adaptive-strategy 11 全绿无回归，`pnpm run build` 通过。
+
 ### 改进 — 内部阈值整理为具名常量（2026-08-28）
 - 新增 `src/types/constants.ts`，把 Y1 未配化的内部算法阈值集中为具名常量，消灭散落的魔法数字：
   - 评分/难度、反射上下限、原子事实/注入/boost 阈值、隐式反馈（重述相似度、最小词长、低价值工具数）

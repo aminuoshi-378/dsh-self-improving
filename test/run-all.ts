@@ -15,6 +15,7 @@ const testFiles = [
   'meta-cognition.test.ts',
   'memory-benchmark.test.ts',
   'advanced-features.test.ts',
+  'correction.test.ts',
 ]
 
 let totalPassed = 0

@@ -239,6 +239,8 @@ export function computeOutcomeScore(input: {
   stepEfficiency: number
   guardTriggerCount: number
   userFeedback: 'positive' | 'negative' | 'none'
+  /** Correction signal (optional) — replaces the coarse implicitNegative bool. */
+  correctionSignal?: CorrectionSignal
 }): number {
   const goalComponent = goalProgressScore(input.goalProgress) * SCORE_WEIGHTS.goalProgress
   const toolComponent = input.toolSuccessRate * SCORE_WEIGHTS.toolSuccess
@@ -250,8 +252,81 @@ export function computeOutcomeScore(input: {
   const guardComponent = SCORE_WEIGHTS.guardPenalty - guardPenalty
   const feedbackComponent = feedbackScore(input.userFeedback) * SCORE_WEIGHTS.userFeedback
 
-  const total = goalComponent + toolComponent + efficiencyComponent + guardComponent + feedbackComponent
+  let total = goalComponent + toolComponent + efficiencyComponent + guardComponent + feedbackComponent
+  // Correction dimension: the larger the correction signal, the more we clamp the
+  // score downward. redo is deliberately neutral here (its positive half is learned
+  // via the contrast lesson, not via blunt penalty) — see correctionSeverityWeight.
+  const penalty = correctionPenalty(input.correctionSignal)
+  total -= penalty
   return Math.max(MIN_OUTCOME_SCORE, Math.min(MAX_OUTCOME_SCORE, total))
+}
+
+// ---------------------------------------------------------------------------
+// Correction events (重构计划：以「用户纠正」为黄金信号)
+// ---------------------------------------------------------------------------
+
+/**
+ * Four-class classification of a user correction signal.
+ * - revert:      回退/否定/撤回 (用户让 agent 撤销某结果/做法)
+ * - redo:        重做/换个方式/再来 (用户让 agent 重新做)
+ * - correction:  纠正/相悖/替代做法 (用户指出结果不对，给出修正方向)
+ * - interrupt:   打断-重输 (用户不等生成结束直接暂停并重新输入，绕过关键词)
+ */
+export type CorrectionType = 'correction' | 'revert' | 'redo' | 'interrupt'
+
+export type CorrectionSeverity = 'high' | 'medium' | 'low'
+
+/**
+ * A structured correction event — the atomic record of where and how the user
+ * corrected the agent. Created by the detection layer, stored in the
+ * `correction_event` table, consumed by scoring / lesson / injection.
+ */
+export interface CorrectionEvent {
+  id: string
+  turnId: string
+  sessionId: string
+  type: CorrectionType
+  /** The seq of the user message in the session event stream. */
+  seq: number
+  /** The tool (name) the correction pointed at, when localizable. */
+  targetTool: string | null
+  /** The tool-sequence content hash the correction pointed at (反查经验). */
+  targetSeqHash: string | null
+  /** Raw user correction text (truncated on storage). */
+  userText: string
+  /** Parsed correction intent / alternative direction (LLM, optional). */
+  intent: string | null
+  /** revert / client-reject → high; correction → medium; redo/interrupt → medium-low. */
+  severity: CorrectionSeverity
+  createdAt: number
+}
+
+/** Parsed signal feeding the scoring layer (replaces the implicitNegative bool). */
+export interface CorrectionSignal {
+  count: number
+  /** Highest severity among this turn's corrections. */
+  severity: CorrectionSeverity | null
+}
+
+/**
+ * Compute a correction penalty (0.0–1.0) from a correction signal.
+ * revert/correction clamp strong downward; redo (对比对) is neutral-ish here —
+ * its positive half is learned via lesson contrast instead of blunt penalty.
+ */
+export function correctionPenalty(signal: CorrectionSignal | undefined): number {
+  if (!signal || signal.count <= 0) return 0
+  const perEvent = correctionSeverityWeight(signal.severity)
+  return Math.min(1, signal.count * perEvent)
+}
+
+/** Map a correction severity to a per-event weight used by correctionPenalty. */
+export function correctionSeverityWeight(severity: CorrectionSeverity | null): number {
+  switch (severity) {
+    case 'high': return 0.25
+    case 'medium': return 0.15
+    case 'low': return 0.05
+    default: return 0.15
+  }
 }
 
 /**
