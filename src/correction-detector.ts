@@ -208,8 +208,13 @@ export function detectCorrectionEvents(
     }
   }
 
-  // 第 2 条起才算「纠正」；第一条是任务描述
-  for (let i = 1; i < userMsgs.length; i++) {
+  // 仅当「整个会话第 1 条用户消息」才是任务描述才跳过；后续 turn 有历史用户
+  // 消息时，本 turn 首条（可能是提问/纠正）同样参与判定。
+  const hasPriorUserMsg = events
+    .slice(0, startIdx)
+    .some((e) => e.type === 'user/message' && e.data?.source?.kind === 'user')
+  for (let i = 0; i < userMsgs.length; i++) {
+    if (i === 0 && !hasPriorUserMsg) continue
     const type = classifyCorrectionText(userMsgs[i].text)
     if (!type) continue
     result.push({
@@ -232,6 +237,37 @@ export function detectCorrectionEvents(
   if (interrupt) result.push(interrupt)
 
   return result
+}
+
+/**
+ * Δ7.b: 抽取「规则未命中」的候选纠正消息（第 2 条起的真实用户消息，关键词归类
+ * 判定为非纠正）。这些候选交给异步 LLM 兜底判定，避免遗漏无语义关键词的用户纠正。
+ * 同步阶段不因此阻塞或误判——候选仅作 LLM 复查的输入。
+ */
+export function extractCorrectionCandidates(
+  events: EventLike[],
+  turn: number,
+): { seq: number; text: string }[] {
+  const startIdx = events.findIndex((e) => e.type === 'turn/start' && e.data?.turn === turn)
+  if (startIdx === -1) return []
+  const userMsgs: { seq: number; text: string }[] = []
+  for (let i = startIdx; i < events.length; i++) {
+    const e = events[i]
+    if (e.type === 'turn/start' && e.data?.turn !== turn && i !== startIdx) break
+    if (e.type === 'turn/end') break
+    if (e.type === 'user/message' && e.data?.source?.kind === 'user') {
+      userMsgs.push({ seq: e.seq ?? -1, text: extractMessageText(e.data?.content) })
+    }
+  }
+  // 仅跳会话第 1 条用户消息（任务描述）；后续 turn 首条（提问/纠正）也作候选。
+  const hasPriorUserMsg = events
+    .slice(0, startIdx)
+    .some((e) => e.type === 'user/message' && e.data?.source?.kind === 'user')
+  return userMsgs
+    .filter((m, i) => {
+      if (i === 0 && !hasPriorUserMsg) return false
+      return !classifyCorrectionText(m.text)
+    })
 }
 
 /** 从 CorrectionEvent[] 汇总成评分层用的 CorrectionSignal。 */

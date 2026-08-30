@@ -14,11 +14,12 @@ import {
   toCorrectionSignal,
   extractCorrectionIntentRuleBased,
   formatCorrectionAdvisory,
+  extractCorrectionCandidates,
 } from '../src/correction-detector.js'
 import { correctionPenalty, computeOutcomeScore, type CorrectionEvent } from '../src/types/index.js'
 import { ExperienceStore } from '../src/store/experience-store.js'
 import { generateStructuredReflection } from '../src/reflection.js'
-import { extractCorrectionIntent } from '../src/llm-bridge.js'
+import { extractCorrectionIntent, classifyCorrectionCandidatesWithLLM } from '../src/llm-bridge.js'
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`ASSERT FAILED: ${message}`)
@@ -354,6 +355,42 @@ test('queryExperiencesByContentHash: 无匹配返回空', () => {
   } finally {
     store.close()
   }
+})
+
+// ---- Δ7.b: 规则未命中候选 + LLM 兜底判定 ----
+
+test('extractCorrectionCandidates: 抽第2条起、规则未命中的用户消息', () => {
+  const events = makeTurn(1, ['list users', '这个我没法接受，接口不该覆盖旧文件', '普通补充'])
+  const cands = extractCorrectionCandidates(events, 1)
+  // 两条候选都无规则关键词 → 都算候选（交给 LLM 判定）
+  assert(cands.length === 2, `应为 2 条候选，实际 ${cands.length}`)
+  assert(cands[0].text.includes('没法接受'), '候选0为第一条补充消息')
+})
+
+test('classifyCorrectionCandidatesWithLLM: LLM 不可用时返回 null（跳过）', async () => {
+  const ctx = { get: () => undefined } // 无 llm → null
+  const result = await classifyCorrectionCandidatesWithLLM(ctx, ['没法接受'], undefined)
+  assert(result === null, '无 LLM 返回 null')
+})
+
+test('classifyCorrectionCandidatesWithLLM: 解析 LLM JSON 数组，忽略非纠正项', async () => {
+  // mock llm.stream 逐块吐出一段 JSON 数组（null 表示非纠正 / redo 命中）
+  let streamHandled = false
+  const ctx = {
+    get: (k: string) =>
+      k === 'llm' ? {
+        stream: async function* (opts: any) {
+          streamHandled = true
+          assert(opts.messages.length === 1, '批量输入为单次调用')
+          yield { type: 'text-delta', text: '[null, {"type":"redo"}]' }
+          yield { type: 'finish', reason: { reason: 'stop' } }
+        },
+      } : undefined,
+  }
+  const result = await classifyCorrectionCandidatesWithLLM(ctx, ['第一条', '这条是重做'], { provider: 'p', model: 'm' })
+  assert(streamHandled, 'LLM stream 被调用')
+  assert(result !== null && result.length === 1, `命中 1 条，实际 ${result?.length}`)
+  assert(result![0].index === 1 && result![0].type === 'redo', '命中索引1且归类 redo')
 })
 
 // ---------------------------------------------------------------------------

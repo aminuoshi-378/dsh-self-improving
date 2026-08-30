@@ -3,7 +3,7 @@
  * Used by lesson generation (I2), lesson merging (C5), and preference distillation (A1-b).
  */
 
-import type { ExperienceRecord } from './types/index.js'
+import type { ExperienceRecord, CorrectionType } from './types/index.js'
 import { randomUUID } from 'node:crypto'
 
 /**
@@ -156,4 +156,55 @@ Respond with ONLY one concise sentence describing the expected alternative (the 
     .replace(/\s*```$/i, '')
     .trim()
   return cleaned.replace(/^["'“‘]|["'”’]+$/g, '').slice(0, 160) || null
+}
+
+/**
+ * Δ7.b: Rule-rule catch — LLM-based correction classification for candidate
+ * user messages that the keyword rules missed. Tries to decide whether each
+ * candidate is a genuine correction (and of which type) via one batched LLM
+ * call, returning null when the LLM is unavailable so callers can skip.
+ *
+ * Goal is to avoid false positives (the rule layer is the conservative floor);
+ * the LLM only *adds* a correction event for messages the rules skipped.
+ */
+export async function classifyCorrectionCandidatesWithLLM(
+  ctx: any,
+  candidates: string[],
+  model?: { provider: string; model: string },
+): Promise<{ index: number; type: CorrectionType | null }[] | null> {
+  if (candidates.length === 0) return []
+  const prompt = `You decide whether each user message in an AI-agent session is a user correction of the agent's prior work.
+Classification is a one-of enum:
+- correction: the user clarifies/redirects what was previously mis-done (semantic correction, even without keywords)
+- revert:    the user wants to undo/rollback/go back
+- redo:      the user wants to try again / take a different approach
+- interrupt: the user stopped the agent and restated
+- NOT a correction: ordinary follow-up, new request, acknowledgement, or question
+
+A message may be a correction even when it contains no trigger keyword (e.g. "the file wasn't supposed to be overwritten", "I meant the other module"). Only classify as a correction when the user is clearly rejecting/correcting something the agent did. Otherwise return null.
+
+## Candidate messages
+${candidates.map((c, i) => `[${i}] ${c}`).join('\n')}
+
+## Output
+Respond with ONLY valid JSON, no markdown: an array of objects where element i corresponds to [i]. Each object is either {"type":"correction"|"revert"|"redo"|"interrupt"} or null when not a correction.
+Example: [null, {"type":"redo"}, null]`
+  const response = await tryLLMComplete(ctx, prompt, model)
+  if (!response) return null
+  const clean = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  try {
+    const parsed = JSON.parse(clean)
+    if (!Array.isArray(parsed)) return null
+    const out: { index: number; type: CorrectionType | null }[] = []
+    for (let i = 0; i < parsed.length; i++) {
+      const item = parsed[i]
+      const type = item && typeof item.type === 'string' ? item.type : null
+      if (type === 'correction' || type === 'revert' || type === 'redo' || type === 'interrupt') {
+        out.push({ index: i, type })
+      }
+    }
+    return out
+  } catch {
+    return null
+  }
 }

@@ -1,4 +1,5 @@
 node_modules/
+benchmark/check-corrections.ts
 dist/
 gui/lib/
 gui/node_modules

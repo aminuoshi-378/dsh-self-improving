@@ -6,6 +6,18 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 改进 — 纠错判定引入 LLM 兜底 + 移除工具序列注入（2026-08-29）
+
+* **Δ7.b LLM 兜底纠错判定**：规则关键词漏判时，由 LLM 二次判定。`llm-bridge.classifyCorrectionCandidatesWithLLM` 批量判定候选消息四分类（一次调用喂全部候选，仅"有候选且配置 LLM"才触发，规则能判的一律走规则零成本）；`correction-detector.extractCorrectionCandidates` 抽取规则漏判的后续用户消息入候选；`runMaintenance` 异步兜底，命中则补建 `llm-corr-*` 事件入库。LLM 不可用/解析失败返回 null，调用方跳过，不影响规则层保守底线（只增不漏删）。
+
+* **Δ7.b 修正 turn 首条误跳**：原先 `slice(1)` 把每个 turn 首条消息都当任务描述跳过，导致「提问几轮后新 turn 首条纠正」被漏判。改为仅当整段会话首条（无任何历史用户消息）才跳过，后续每个 turn 的所有消息都参与规则判定 + 候选收集。
+
+* **Δ7.b 日志标识**：规则命中 `[rule-based]`、候选排队 `[candidate]`、无候选 `[skip]`、有候选无 LLM `[no-LLM]`、LLM 参与 `[LLM]`；区分 `hits===null`（LLM 不可用/超时，如实报告不误判）与空数组（确认真无纠正）。
+
+* **移除工具序列（tool sequence）注入**：删除 systemPrompt 的 `Effective/Failed tool sequence` 事实注入段与 I4 的 `upsertToolSequenceFact` 写入点（不再每 turn 写 tool-derived 序列事实，仅保留 model-inferred 的 `task-type`），删除 `EFFECTIVE_FACT_SCORE_THRESHOLD`/`FAILED_FACT_SCORE_THRESHOLD` 引用；工具序列对模型无借鉴价值，一并清理本地经验库 22 条历史 tool-sequence facts。
+
+* 测试：correction.test.ts 增至 27 例（turn 首条判定、候选抽取、LLM 不可用跳过、JSON 解析四分类、空候选语义），全链 136 例全绿，`pnpm run build` 通过。
+
 ### 重构 — 以「用户纠正」为黄金信号（2026-08-29）
 
 * 四层架构升级：检测层新增 `src/correction-detector.ts`，评分层接入 `correctionSignal`，提炼层 lesson 接入纠正上下文，注入层 systemPrompt 注入纠正避让。

@@ -21,14 +21,12 @@ import { ulid } from 'ulid'
 import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern, computeOutcomeScore } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome, CorrectionEvent } from './types/index.js'
-import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased, formatCorrectionAdvisory } from './correction-detector.js'
+import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased, formatCorrectionAdvisory, extractCorrectionCandidates, correctionTypeSeverity } from './correction-detector.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
-import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent } from './llm-bridge.js'
+import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent, classifyCorrectionCandidatesWithLLM } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
 import { selectModel, guardTool } from './adaptive-strategy.js'
 import {
-  EFFECTIVE_FACT_SCORE_THRESHOLD,
-  FAILED_FACT_SCORE_THRESHOLD,
   INJECTION_BEST_THRESHOLD,
   INJECTION_WORST_THRESHOLD,
   POSITIVE_OUTCOME_THRESHOLD,
@@ -395,6 +393,8 @@ export function apply(ctx: Context, config: Config): void {
     // redo 的正面价值通过 contrast lesson（见 lesson 提炼）学习，这里只做轻度扣分。
     const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
     let correctionEvents: CorrectionEvent[] = []
+    // Δ7.b: 规则未命中的候选纠正消息——交给异步 LLM 兜底判定（避免漏掉无语义关键词的纠正）
+    let correctionCandidates: { seq: number; text: string }[] = []
     try {
       const events = agent.session.events ?? []
       correctionEvents = detectCorrectionEvents(events, turn, entry.tools, agent.id)
@@ -417,7 +417,13 @@ export function apply(ctx: Context, config: Config): void {
           log(`redo对比对 error: ${(err as Error).message}`)
         }
 
-        log(`turn ${turn}: detected ${correctionEvents.length} correction event(s) [${correctionEvents.map(e => e.type).join(',')}]`)
+        log(`[rule-based] correction detection: turn ${turn} flagged ${correctionEvents.length} event(s) [${correctionEvents.map(e => e.type).join(',')}]`)
+      }
+
+      // Δ7.b: 收集规则未命中的候选纠正消息，交由异步 runMaintenance 用 LLM 兜底判定
+      correctionCandidates = extractCorrectionCandidates(events, turn)
+      if (correctionCandidates.length > 0) {
+        log(`[candidate] correction re-scan: ${correctionCandidates.length} rule-missed message(s) queued for LLM`)
       }
     } catch (err) {
       log(`correction detection error: ${(err as Error).message}`)
@@ -541,13 +547,6 @@ export function apply(ctx: Context, config: Config): void {
     // I4: Extract atomic facts from this turn and write to atomic_facts table
     try {
       const subject = `workspace:${wsDigest ?? 'default'}`
-      if (outcomeScore >= EFFECTIVE_FACT_SCORE_THRESHOLD && toolsUsed.length > 0) {
-        // T4: multi-valued fact — each distinct sequence is its own fact
-        store.upsertToolSequenceFact(subject, 'effective-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
-      }
-      if (outcomeScore <= FAILED_FACT_SCORE_THRESHOLD && toolsUsed.length > 0) {
-        store.upsertToolSequenceFact(subject, 'failed-tool-sequence', toolsUsed.join(' → '), 'tool-derived')
-      }
       if (taskPattern) {
         // task-type is single-valued per workspace — upsertFact is correct here
         store.upsertFact(subject, 'task-type', taskPattern, 'model-inferred')
@@ -575,6 +574,7 @@ export function apply(ctx: Context, config: Config): void {
         correction: correctionEvents
           .map(e => `[${e.type}] ${e.userText}`)
           .join(' | ') || null,
+        correctionCandidates,
         injectedIds: entry.lastInjectedIds, // J7: pass injected ids for precise boost
       })
 
@@ -882,27 +882,6 @@ export function apply(ctx: Context, config: Config): void {
           lines.push('')
         }
 
-        // J4: Inject atomic facts (effective/failed tool sequences)
-        // Note: text() callback has no agent context, so we can't filter by current workspace.
-        // Limit to top 3 effective + top 3 failed to avoid flooding the system prompt.
-        // T4: predicate now carries a sequence hash suffix (multi-valued facts), so
-        // match by prefix instead of exact equality.
-        try {
-          const facts = store.queryFacts()
-          const effective = facts.filter(f => f.predicate.startsWith('effective-tool-sequence')).slice(0, 3)
-          const failed = facts.filter(f => f.predicate.startsWith('failed-tool-sequence')).slice(0, 3)
-          if (effective.length > 0 || failed.length > 0) {
-            if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
-            for (const f of effective) {
-              lines.push(`- Effective tool sequence: ${f.object}`)
-            }
-            for (const f of failed) {
-              lines.push(`- Failed tool sequence: ${f.object}`)
-            }
-            lines.push('')
-          }
-        } catch { /* ignore */ }
-
         // Corrections（重构计划黄金信号）：全局注入「用户不接受的做法」——
         // 让模型在收到任何 task 前就主动规避被纠正/回退/重做的方向。
         try {
@@ -947,6 +926,8 @@ export function apply(ctx: Context, config: Config): void {
     difficulty?: 'low' | 'medium' | 'high'
     /** 纠正事件文本摘要：用户拒绝/期望的上下文（重构计划黄金信号）。 */
     correction?: string | null
+    /** Δ7.b: 规则未命中的候选纠正消息，runMaintenance 用 LLM 兜底判定。 */
+    correctionCandidates?: { seq: number; text: string }[]
     injectedIds?: string[] // J7: ids of experiences injected in the turn that produced this reflection
   }
   // Cap the queue to prevent unbounded growth when maintenance is delayed (e.g. headless mode)
@@ -1015,6 +996,54 @@ export function apply(ctx: Context, config: Config): void {
           }
         }
         log(`J7: boosted ${entry.injectedIds.length} injected experiences (positive outcome)`)
+      }
+
+      // Δ7.b: Correction candidate LLM classification (rule-rule catch).
+      // 规则层对无语义关键词的用户纠正会漏判；此处用一次批量 LLM 判定复查本 turn
+      // 的候选消息，命中则补建 correction_event 入库。LLM 不可用/判定失败则跳过
+      //（规则层是保守底线，LLM 只增不误删）。
+      try {
+        const candidates = entry.correctionCandidates ?? []
+        if (candidates.length === 0) {
+          log(`[skip] correction LLM re-scan: no rule-missed candidates`)
+        } else if (!llmModel) {
+          log(`[no-LLM] correction re-scan: ${candidates.length} candidate(s) skipped (provider/model unavailable)`)
+        } else {
+          log(`[LLM] correction re-scan: classifying ${candidates.length} candidate(s)`)
+          const hits = await classifyCorrectionCandidatesWithLLM(
+            ctx,
+            candidates.map(c => c.text),
+            llmModel,
+          )
+          if (hits === null) {
+            // LLM 不可用/超时：判定结果未知，跳过而不是下「非纠正」结论
+            log(`[LLM] correction re-scan: LLM unavailable/timed out — ${candidates.length} candidate(s) left unclassified`)
+          } else if (hits.length > 0) {
+            const wsDigest = agent.options?.cwd ? String(agent.options.cwd).slice(-32) : null
+            const extra: CorrectionEvent[] = hits.map(h => {
+              const cand = candidates[h.index]
+              return {
+                id: `llm-corr-${cand.seq}`,
+                turnId: entry.expId ? `turn-${entry.expId.split('-').pop()}` : `turn-${Date.now()}`,
+                sessionId: agent.id,
+                type: h.type!,
+                seq: cand.seq,
+                targetTool: null,
+                targetSeqHash: null,
+                userText: cand.text.slice(0, 200),
+                intent: null,
+                severity: correctionTypeSeverity(h.type!),
+                createdAt: Date.now(),
+              }
+            })
+            store.storeCorrectionEvents(agent.id, extra[0].turnId, extra, wsDigest)
+            log(`[LLM] correction re-scan: added ${extra.length} correction(s) missed by rules [${extra.map(e => e.type).join(',')}]`)
+          } else {
+            log(`[LLM] correction re-scan: ${candidates.length} candidate(s) classified as NOT corrections`)
+          }
+        }
+      } catch (err) {
+        log(`[LLM] correction candidate classification error: ${(err as Error).message}`)
       }
     }
 
