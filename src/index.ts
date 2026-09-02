@@ -108,6 +108,22 @@ export function rulesSchema() {
 
 const PLUGIN_SOURCE: MessageSource = { kind: 'plugin', plugin: 'self-improving' }
 
+/**
+ * 解析 Agent 的绝对工作区路径。
+ *
+ * 注意：`Agent.options` 只有 provider/model/maxTokens，**没有 cwd**——此前写
+ * `agent.options.cwd` 恒为 undefined，导致 `workspace_digest` 全部 NULL、跨工作区
+ * 隔离形同虚设。dsh 的真实工作区在会话头的 `agent.session.header.cwd`（绝对路径）。
+ * 这里依次取 session.header.cwd → options.cwd（兼容旧运行时），取不到返回 undefined。
+ */
+function resolveAgentCwd(agent: Agent): string | undefined {
+  try {
+    const h = (agent.session as any)?.header
+    if (h && typeof h.cwd === 'string') return h.cwd
+  } catch { /* header 可能不可用 */ }
+  return (agent as any).options?.cwd
+}
+
 /** Simple stderr logger — works in headless and web mode, visible on console */
 function log(msg: string, data?: unknown): void {
   if (data !== undefined) {
@@ -260,7 +276,8 @@ export function apply(ctx: Context, config: Config): void {
     log(`agent/turn-stopping fired — turn=${payload.turn}`)
     const { agent, turn } = payload
     const entry = agentTools.get(agent.id)
-    const wsDigestTop = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+    const agentCwd = resolveAgentCwd(agent)
+    const wsDigestTop = agentCwd ? String(agentCwd).slice(-32) : null
 
     // Δ7.b/fix: 纠错检测最先执行，独立于 entry——「无工具/低价值」的纯对话性纠正
     // turn 也必须被捕获（用户纠正恰多在无工具调用的对话轮），否则会被下方的
@@ -310,7 +327,7 @@ export function apply(ctx: Context, config: Config): void {
         if (hits === null) {
           log(`[LLM] correction re-scan (no-tool turn): LLM unavailable/timed out — ${topCandidates.length} candidate(s) left unclassified`)
         } else if (hits.length > 0) {
-          const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+          const wsDigest = agentCwd ? String(agentCwd).slice(-32) : null
           const extra: CorrectionEvent[] = hits.map(h => {
             const cand = topCandidates[h.index]
             return {
@@ -469,7 +486,7 @@ export function apply(ctx: Context, config: Config): void {
     // 检测层已在 turn-stopping 顶部执行（topCorrectionEvents，独立于 entry），
     // 此处仅复用其结果：汇总成 correctionSignal 喂给评分层；对 redo/revert/correction
     // 类型的工具序列做轻度扣分。避免重复落库。
-    const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+    const wsDigest = agentCwd ? String(agentCwd).slice(-32) : null
     let correctionEvents: CorrectionEvent[] = topCorrectionEvents
     // Δ7.b: 规则未命中的候选纠正消息——交给异步 LLM 兜底判定（避免漏掉无语义关键词的纠正）
     let correctionCandidates: { seq: number; text: string }[] = []
@@ -720,7 +737,8 @@ export function apply(ctx: Context, config: Config): void {
       log(`agent/pre-step — turn=${turn} step=${step} (injecting)`)
 
       // Query experience store for similar past turns
-      const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : undefined
+      const agentCwdPeer = resolveAgentCwd(agent)
+      const wsDigest = agentCwdPeer ? String(agentCwdPeer).slice(-32) : undefined
 
         // P5: Infer task pattern from current messages for better retrieval
         const firstMsg = payload.messages?.[0]
@@ -749,11 +767,14 @@ export function apply(ctx: Context, config: Config): void {
               .trim()
               .slice(0, 100)
           : undefined
+        // 任务相关度过滤（类型3）：general 是 inferTaskPattern 的兜底，无区分度。
+        // 以 general 传给 query 会放大无关经验池（测试留痕多为 general）。
+        const taskFilter = currentTaskPattern && currentTaskPattern !== 'general' ? currentTaskPattern : undefined
         const records = store.query({
           workspaceDigest: wsDigest,
           limit: 10,
           minScore: config.minInjectionScore,
-          taskPattern: currentTaskPattern ?? undefined,
+          taskPattern: taskFilter,
           searchText,
         })
 
@@ -785,8 +806,15 @@ export function apply(ctx: Context, config: Config): void {
 
         try {
           if (records.length > 0) {
+          // 类型3：任务相关度过滤——taskFilter 明确时剔除 taskPattern 泛化的无关经验
+          //（测试/GUI 留痕多为 general），避免高分无关经验挤占注入预算。
+          let pool = records
+          if (taskFilter) {
+            const rel = records.filter((r) => r.taskPattern === taskFilter)
+            pool = rel.length > 0 ? rel : records
+          }
           // P5: Sort by task pattern match, difficulty priority, then outcome score
-          const sorted = [...records].sort((a, b) => {
+          const sorted = [...pool].sort((a, b) => {
             if (currentTaskPattern) {
               const aMatch = a.taskPattern === currentTaskPattern ? 1 : 0
               const bMatch = b.taskPattern === currentTaskPattern ? 1 : 0
@@ -798,7 +826,7 @@ export function apply(ctx: Context, config: Config): void {
           })
           // R1: best by sorted order (highest priority), worst by pure outcomeScore (lowest)
           const best = sorted[0]
-          const worstByScore = [...records].sort((a, b) => a.outcomeScore - b.outcomeScore)[0]
+          const worstByScore = [...pool].sort((a, b) => a.outcomeScore - b.outcomeScore)[0]
           const worst = (worstByScore && worstByScore.id !== best.id) ? worstByScore : null
 
           // P3: Dynamic injection — allocate by difficulty
@@ -937,7 +965,9 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   // --- Layer 2: Register system prompt section for learned preferences ---
-  // A1-c: Reads from ~/.dsh/preferences.md (persisted preferences) + live stats
+  // A1-c: Reads from ~/.dsh/preferences.md (persisted preferences) only.
+  // 全局纠正避让与全局 stats 在此移除：section 是全局、无 agent 上下文，无法按工作区
+  // 过滤，跨工作区注入会误避让/稀释 token 成本；工作区级纠正与经验改由 pre-step 注入。
   if (config.behaviorAdapterEnabled) {
     ctx.systemPrompt.section({
       name: 'self-improving-learned-preferences',
@@ -952,34 +982,6 @@ export function apply(ctx: Context, config: Config): void {
           lines.push('## User Preferences (advisory)', '')
           lines.push(prefContent)
           lines.push('')
-        }
-
-        // Corrections（重构计划黄金信号）：全局注入「用户不接受的做法」——
-        // 让模型在收到任何 task 前就主动规避被纠正/回退/重做的方向。
-        try {
-          const corr = store.queryCorrectionEvents(5)
-          if (corr.length > 0) {
-            if (lines.length === 0) lines.push('## Workspace Knowledge (advisory)', '')
-            lines.push(...formatCorrectionAdvisory(corr))
-            lines.push('')
-          }
-        } catch { /* ignore */ }
-
-        // Live stats (kept as supplementary signal)
-        const stats = store.stats()
-        if (stats.total >= 10) {
-          if (lines.length === 0) {
-            lines.push('## Learned Preferences (advisory)', '')
-          }
-          if (stats.avgScore > 0.7) {
-            lines.push(`- Recent outcomes are strong (avg score ${stats.avgScore.toFixed(2)} over ${stats.total} turns)`)
-          }
-          if (stats.avgScore < 0.4) {
-            lines.push(`- Recent outcomes have low scores (avg ${stats.avgScore.toFixed(2)}) — consider more careful tool selection`)
-          }
-          if (stats.positiveCount > stats.total * 0.5) {
-            lines.push(`- User has given positive feedback on ${stats.positiveCount} of ${stats.total} turns`)
-          }
         }
 
         return lines.length > 0 ? lines.join('\n') : ''
@@ -1091,7 +1093,8 @@ export function apply(ctx: Context, config: Config): void {
             // LLM 不可用/超时：判定结果未知，跳过而不是下「非纠正」结论
             log(`[LLM] correction re-scan: LLM unavailable/timed out — ${candidates.length} candidate(s) left unclassified`)
           } else if (hits.length > 0) {
-            const wsDigest = agent.options?.cwd ? String(agent.options.cwd).slice(-32) : null
+            const _cwd = resolveAgentCwd(agent)
+            const wsDigest = _cwd ? String(_cwd).slice(-32) : null
             const extra: CorrectionEvent[] = hits.map(h => {
               const cand = candidates[h.index]
               return {

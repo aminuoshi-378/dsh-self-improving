@@ -6,10 +6,24 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 优化 — 修正工作区隔离 + 收敛注入内容与检索排序（2026-09-02）
+
+审查注入 system prompt 的经验内容发现跨工作区误避让、无关/占位经验稀释注入、以及工作区隔离形同虚设。三处修正：
+
+* **修复 workspace\_digest 填充（工作区隔离真实生效）**：此前所有取 `agent.options.cwd` 处——而 `Agent.options` 只有 provider/model/maxTokens，**没有 cwd**——导致 `workspace_digest` 全部 NULL，Δ7.2 的按工作区避让/检索实际上跨工作区共享。新增 `resolveAgentCwd()`（取 `agent.session.header.cwd` 绝对路径，回退 `options.cwd` 兼容旧运行时），替换 turn-stopping、pre-step、runMaintenance 共 5 处取值点，`workspace_digest` 现在反映真实工作区。
+
+* **systemPrompt.section 仅保留偏好**：section 是全局、无 agent 上下文，无法按工作区过滤，其注入的全局纠正避让（`queryCorrectionEvents(5)`）与全局 stats 会造成跨工作区误避让并稀释 token。移除这两段，仅保留 `~/.dsh/preferences.md` 偏好；工作区级纠正与经验注入改由 pre-step 统一承担。
+
+* **pre-step 检索先按任务相关度过滤再排序**：`general` 是 `inferTaskPattern` 的兜底、无区分度，以它传给 query 会放大无关经验池（测试留痕多为 general）。改为 taskFilter 仅在非 general 时传入；排序前再剔除 taskPattern 不匹配的 general 记录，避免高分无关经验挤占注入预算。
+
+* 验证：`pnpm run build` 通过，全量测试 136 例全绿。
+
 ### 修复 — 纯对话（无工具）纠错轮 LLM 兜底补判不再丢失（2026-09-02）
 
 * **纠错检测提前到 turn-stopping 顶部**：原逻辑在 turn-stopping 顶部先做 no-tool / low-value 的提前 `return`，导致纯对话性纠正轮（用户纠正恰多在无工具调用的对话轮）的规则检测与 LLM 兜底候选从不同步执行，黄金信号丢失。现将 `detectCorrectionEvents` 与 `extractCorrectionCandidates` 提到 turn-stopping 最前、独立于 entry 执行，下方评分仅复用结果，避免重复落库。
+
 * **无工具/低价值 turn 的 LLM 兜底**：新增 `llmRescanMissed()` 闭包（唯一 LLM 分类入口，规则漏判候选直接解析 provider/model 批量送到 `classifyCorrectionCandidatesWithLLM`），在 no-tool 与 low-value 两个提前 return 分支前调用，命中即补建 `llm-corr-*` 事件入库。此前这类 turn 候选只打日志不入队，LLM 补判从不执行。
+
 * 验证：本地 dsh web + 浏览器集成测试，无工具轮触发 `[LLM] correction re-scan (no-tool turn): added 1 correction(s) missed by rules [correction]`，`correction_event` 表落库 `llm-corr-58`（type=correction, severity=high）。`pnpm run build` 通过。
 
 ### 改进 — 纠错判定引入 LLM 兜底 + 移除工具序列注入（2026-08-29）
