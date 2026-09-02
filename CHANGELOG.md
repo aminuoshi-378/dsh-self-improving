@@ -6,6 +6,12 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 修复 — 纯对话（无工具）纠错轮 LLM 兜底补判不再丢失（2026-09-02）
+
+* **纠错检测提前到 turn-stopping 顶部**：原逻辑在 turn-stopping 顶部先做 no-tool / low-value 的提前 `return`，导致纯对话性纠正轮（用户纠正恰多在无工具调用的对话轮）的规则检测与 LLM 兜底候选从不同步执行，黄金信号丢失。现将 `detectCorrectionEvents` 与 `extractCorrectionCandidates` 提到 turn-stopping 最前、独立于 entry 执行，下方评分仅复用结果，避免重复落库。
+* **无工具/低价值 turn 的 LLM 兜底**：新增 `llmRescanMissed()` 闭包（唯一 LLM 分类入口，规则漏判候选直接解析 provider/model 批量送到 `classifyCorrectionCandidatesWithLLM`），在 no-tool 与 low-value 两个提前 return 分支前调用，命中即补建 `llm-corr-*` 事件入库。此前这类 turn 候选只打日志不入队，LLM 补判从不执行。
+* 验证：本地 dsh web + 浏览器集成测试，无工具轮触发 `[LLM] correction re-scan (no-tool turn): added 1 correction(s) missed by rules [correction]`，`correction_event` 表落库 `llm-corr-58`（type=correction, severity=high）。`pnpm run build` 通过。
+
 ### 改进 — 纠错判定引入 LLM 兜底 + 移除工具序列注入（2026-08-29）
 
 * **Δ7.b LLM 兜底纠错判定**：规则关键词漏判时，由 LLM 二次判定。`llm-bridge.classifyCorrectionCandidatesWithLLM` 批量判定候选消息四分类（一次调用喂全部候选，仅"有候选且配置 LLM"才触发，规则能判的一律走规则零成本）；`correction-detector.extractCorrectionCandidates` 抽取规则漏判的后续用户消息入候选；`runMaintenance` 异步兜底，命中则补建 `llm-corr-*` 事件入库。LLM 不可用/解析失败返回 null，调用方跳过，不影响规则层保守底线（只增不漏删）。

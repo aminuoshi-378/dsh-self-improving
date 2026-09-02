@@ -260,9 +260,86 @@ export function apply(ctx: Context, config: Config): void {
     log(`agent/turn-stopping fired — turn=${payload.turn}`)
     const { agent, turn } = payload
     const entry = agentTools.get(agent.id)
+    const wsDigestTop = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+
+    // Δ7.b/fix: 纠错检测最先执行，独立于 entry——「无工具/低价值」的纯对话性纠正
+    // turn 也必须被捕获（用户纠正恰多在无工具调用的对话轮），否则会被下方的
+    // no-tools / low-value 提前 return 挡住，致黄金信号丢失。
+    let topCorrectionEvents: CorrectionEvent[] = []
+    let topCandidates: { seq: number; text: string }[] = []
+    try {
+      const events = agent.session.events ?? []
+      topCorrectionEvents = detectCorrectionEvents(events, turn, entry?.tools ?? [], agent.id)
+      if (topCorrectionEvents.length > 0) {
+        store.storeCorrectionEvents(agent.id, `turn-${turn}`, topCorrectionEvents, wsDigestTop)
+      }
+      topCandidates = extractCorrectionCandidates(events, turn)
+      if (topCandidates.length > 0) {
+        log(`[candidate] correction re-scan: ${topCandidates.length} rule-missed message(s) queued for LLM`)
+      }
+    } catch (err) {
+      log(`correction detection (top) error: ${(err as Error).message}`)
+    }
+
+    // Δ7.b/fix: 纯对话（无工具）turn 不入经验库，但规则未命中的候选纠正
+    // 仍需交给 LLM 兜底复核——否则这类 turn 提前 return 后候选即被丢弃，
+    // LLM 补判从不执行。这里直接解析模型并做一批 LLM 分类，命中即补建事件。
+    const llmRescanMissed = async (): Promise<void> => {
+      if (!config.metaCognitionEnabled || topCandidates.length === 0) return
+      try {
+        let provider = agent.options?.provider
+        let model = agent.options?.model
+        if (!provider || !model) {
+          try {
+            const header = (agent.session as any).requestHeader?.()
+            provider = provider || header?.config?.provider
+            model = model || header?.config?.model
+          } catch { /* requestHeader may not be available */ }
+        }
+        const llmModel = (provider && model) ? { provider, model } : undefined
+        if (!llmModel) {
+          log(`[no-LLM] correction re-scan (no-tool turn): ${topCandidates.length} candidate(s) skipped (provider/model unavailable)`)
+          return
+        }
+        log(`[LLM] correction re-scan (no-tool turn): classifying ${topCandidates.length} candidate(s)`)
+        const hits = await classifyCorrectionCandidatesWithLLM(
+          ctx,
+          topCandidates.map(c => c.text),
+          llmModel,
+        )
+        if (hits === null) {
+          log(`[LLM] correction re-scan (no-tool turn): LLM unavailable/timed out — ${topCandidates.length} candidate(s) left unclassified`)
+        } else if (hits.length > 0) {
+          const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
+          const extra: CorrectionEvent[] = hits.map(h => {
+            const cand = topCandidates[h.index]
+            return {
+              id: `llm-corr-${cand.seq}`,
+              turnId: `turn-${turn}`,
+              sessionId: agent.id,
+              type: h.type!,
+              seq: cand.seq,
+              targetTool: null,
+              targetSeqHash: null,
+              userText: cand.text.slice(0, 200),
+              intent: null,
+              severity: correctionTypeSeverity(h.type!),
+              createdAt: Date.now(),
+            }
+          })
+          store.storeCorrectionEvents(agent.id, `turn-${turn}`, extra, wsDigest)
+          log(`[LLM] correction re-scan (no-tool turn): added ${extra.length} correction(s) missed by rules [${extra.map(e => e.type).join(',')}]`)
+        } else {
+          log(`[LLM] correction re-scan (no-tool turn): ${topCandidates.length} candidate(s) classified as NOT corrections`)
+        }
+      } catch (err) {
+        log(`[LLM] correction re-scan (no-tool turn) error: ${(err as Error).message}`)
+      }
+    }
 
     if (!entry || entry.tools.length === 0) {
       log(`turn-stopping: no tools tracked for agent ${agent.id}, skipping (P-B: no-tool turns not stored)`)
+      void llmRescanMissed()
       return
     }
 
@@ -273,6 +350,7 @@ export function apply(ctx: Context, config: Config): void {
     const difficultyForFilter = computeDifficulty(stepCountForFilter, hasFailuresForFilter)
     if (difficultyForFilter === 'low' && entry.tools.length <= LOW_VALUE_TOOL_MAX) {
       log(`turn-stopping: low-value turn (P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
+      void llmRescanMissed()
       agentTools.delete(agent.id)
       // M4: Also clean up task unit for no-goal turns to prevent map leak
       if (!entry.goalId) {
@@ -388,19 +466,16 @@ export function apply(ctx: Context, config: Config): void {
     } catch { /* ignore */ }
 
     // --- Correction events（重构计划：以「用户纠正」为黄金信号）---
-    // 检测层：四分类（revert/redo/correction/interrupt）+ 节点定位 → 入库 →
-    // 汇总成 correctionSignal 喂给评分层（替换粗粒度 implicitNegative 的纠正维度）。
-    // redo 的正面价值通过 contrast lesson（见 lesson 提炼）学习，这里只做轻度扣分。
+    // 检测层已在 turn-stopping 顶部执行（topCorrectionEvents，独立于 entry），
+    // 此处仅复用其结果：汇总成 correctionSignal 喂给评分层；对 redo/revert/correction
+    // 类型的工具序列做轻度扣分。避免重复落库。
     const wsDigest = agent.options.cwd ? String(agent.options.cwd).slice(-32) : null
-    let correctionEvents: CorrectionEvent[] = []
+    let correctionEvents: CorrectionEvent[] = topCorrectionEvents
     // Δ7.b: 规则未命中的候选纠正消息——交给异步 LLM 兜底判定（避免漏掉无语义关键词的纠正）
     let correctionCandidates: { seq: number; text: string }[] = []
     try {
       const events = agent.session.events ?? []
-      correctionEvents = detectCorrectionEvents(events, turn, entry.tools, agent.id)
       if (correctionEvents.length > 0) {
-        store.storeCorrectionEvents(agent.id, `turn-${turn}`, correctionEvents, wsDigest)
-
         // Δ7-2 redo 对比对：按本 turn 工具序列的内容指纹，对既有同序列经验做轻度打压，
         // 降低被纠正/重做过的做法再次被注入的概率。用 store.computeContentHash 保证与
         // experiences.content_hash 同源，避免 targetSeqHash(无 workspace) 对不上。
@@ -422,9 +497,6 @@ export function apply(ctx: Context, config: Config): void {
 
       // Δ7.b: 收集规则未命中的候选纠正消息，交由异步 runMaintenance 用 LLM 兜底判定
       correctionCandidates = extractCorrectionCandidates(events, turn)
-      if (correctionCandidates.length > 0) {
-        log(`[candidate] correction re-scan: ${correctionCandidates.length} rule-missed message(s) queued for LLM`)
-      }
     } catch (err) {
       log(`correction detection error: ${(err as Error).message}`)
     }
