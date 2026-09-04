@@ -6,6 +6,20 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 新增 — v2 认知闭环重构：五个阶段根治四大核心缺陷（2026-09-04）
+
+将「自进化」从单向乐观偏置的经验库，重构为「预测 → 行动 → 判定 → 归因 → 修正」的认知闭环。方案详见 `docs/design-v2.md`，五个阶段均已实现并验证（累计新增 52 个测试，总测试数 109→188）：
+
+* **阶段 A 真值层**：新增 `src/truth-ground.ts`（`resolveVerdict` 三级回退 L0 用户反馈 > L1 验收标准自评 > L2 硬事实 > L3 弱先验），产出 `pass/fail/unknown` 三态 + `outcomeConfidence`；判定粒度从 turn 提升到 TaskUnit（新表 `task_unit`）；修正 `active≠advanced`、`未知≠满分` 两处评分失真。新增 `generateAcceptanceCriteria`/`judgeTaskOutcome`（LLM 验收标准）。
+
+* **阶段 B 双向归因**：新增 `transfer_confidence` 字段（独立于 `confidence`），`applyAttribution`（pass+used 加分 / fail+used 扣分 / not-used 不动）；移除 v1 单向 `boostConfidence`（根除"关联当因果"）。
+
+* **阶段 C 语义检索**：新增 `src/semantic-key.ts`（规则降级）+ `generateSemanticKey`（LLM 归约），新增 `semantic_key` 字段与 `queryBySemanticKey`（语义签名召回替代工具序列主召回，根治"同工具不同任务"碰撞）。
+
+* **阶段 D 配对对照实验**：新增 `src/attribution.ts`（`computeEffectSize` 效应量 + `aggregateArms`）、`attribution_event` 表（原始 `(used, passed)` 三元组），效应量驱动 `transferConfidence` 校准（双阈值 ±0.15 + 最小样本 3）。
+
+* **阶段 E 分层记忆**：新增 `memory_tier` 字段（`event`/`strategy`），`promoteToStrategy`/`demoteFromStrategy`/`forgetStrategy`，遗忘由 transferConfidence 驱动而非容量。
+
 ### 优化 — 修正工作区隔离 + 收敛注入内容与检索排序（2026-09-02）
 
 审查注入 system prompt 的经验内容发现跨工作区误避让、无关/占位经验稀释注入、以及工作区隔离形同虚设。三处修正：

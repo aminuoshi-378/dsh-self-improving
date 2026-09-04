@@ -153,7 +153,7 @@ Restart dsh web, then view stats and import/export in Settings → Plugins → E
 ```bash
 cd dsh-self-improving
 pnpm install          # install dependencies
-pnpm test             # run 119 unit tests (8 test files)
+pnpm test             # run 188 unit tests (14 test files)
 pnpm run benchmark    # run simulated A/B benchmark, generates benchmark-report.html
 ```
 
@@ -168,6 +168,12 @@ pnpm run test:memory     # memory benchmark (15 tests)
 pnpm run test:advanced   # advanced features A1-B2 + T4 (30 tests)
 pnpm run test:adaptive   # adaptive strategies Phase 6 (11 tests)
 pnpm run test:event      # event parsing compatibility (9 tests)
+pnpm run test:correction # correction detection (27 tests)
+pnpm run test:truth      # truth-ground layer (18 tests)
+pnpm run test:attribution # bidirectional attribution (8 tests)
+pnpm run test:semantic   # semantic key retrieval (10 tests)
+pnpm run test:effect     # effect-size paired comparison (9 tests)
+pnpm run test:memory-tier # layered memory (7 tests)
 ```
 
 ---

@@ -1,5 +1,7 @@
 # dsh-self-improving — 架构设计
 
+> 注：本文档描述 v1 的四层架构。v2 的认知闭环重构方案（真值层、双向归因、语义检索、配对对照、分层记忆）见 [`design-v2.md`](design-v2.md)。
+
 ## 背景
 
 dsh（DeepSeek Harness）是基于 vendored Cordis 的插件化 agent 框架：**一切都是插件**——模型适配器、工具注册、会话日志、agent 循环本身都可替换。通过在已有插件旁挂载新插件来扩展 dsh。
