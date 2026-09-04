@@ -23,16 +23,19 @@ import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome, CorrectionEvent } from './types/index.js'
 import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased, formatCorrectionAdvisory, extractCorrectionCandidates, correctionTypeSeverity } from './correction-detector.js'
 import { getPreferencesFilePath, readPreferences, extractPreference, appendPreference, distillPreferencesWithLLM } from './preference-extractor.js'
-import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent, classifyCorrectionCandidatesWithLLM } from './llm-bridge.js'
+import { tryLLMComplete, llmMergeLessons, extractCorrectionIntent, classifyCorrectionCandidatesWithLLM, generateAcceptanceCriteria, judgeTaskOutcome, generateSemanticKey } from './llm-bridge.js'
 import { buildLessonPrompt, generateStructuredReflection, mergeLessonsRuleBased } from './reflection.js'
 import { selectModel, guardTool } from './adaptive-strategy.js'
+import { resolveVerdict } from './truth-ground.js'
+import { generateSemanticKeyRuleBased } from './semantic-key.js'
+import { computeEffectSize } from './attribution.js'
 import {
   INJECTION_BEST_THRESHOLD,
   INJECTION_WORST_THRESHOLD,
-  POSITIVE_OUTCOME_THRESHOLD,
   TASK_RESTATED_SIMILARITY_THRESHOLD,
   MIN_WORD_LEN,
   LOW_VALUE_TOOL_MAX,
+  ARM_EFFECT_CONFIDENCE_DELTA,
 } from './types/constants.js'
 
 export const name = 'self-improving'
@@ -225,12 +228,13 @@ export function apply(ctx: Context, config: Config): void {
     taskUnitId: string        // P-C: ULID grouping turns into a task unit
     goalId: string | null     // P-C: dsh goal id if goal-driven
     lastInjectedIds: string[] // J7: ids of experiences injected in the last turn
+    lastInjected: { id: string; toolsUsed: string[]; semanticKey: string | null }[] // v2: injected experiences + tools + semantic key, for attribution
   }>()
 
   // P-C: Track active task unit per agent (for cross-turn aggregation)
   // When a goal exists, all turns until goal complete share the same taskUnitId.
   // When no goal, each turn is its own task unit (default).
-  const agentTaskUnits = new Map<string, { taskUnitId: string; goalId: string | null; turns: number }>()
+  const agentTaskUnits = new Map<string, { taskUnitId: string; goalId: string | null; turns: number; acceptanceCriteria: string | null; startedAt: number }>()
 
   // --- Layer 1: Observe tool outcomes via tools/result ---
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
@@ -253,7 +257,7 @@ export function apply(ctx: Context, config: Config): void {
           }
         } catch { /* goal service not available */ }
 
-        taskUnit = { taskUnitId: ulid(), goalId, turns: 0 }
+        taskUnit = { taskUnitId: ulid(), goalId, turns: 0, acceptanceCriteria: null, startedAt: Date.now() }
         agentTaskUnits.set(agent.id, taskUnit)
       }
 
@@ -261,6 +265,7 @@ export function apply(ctx: Context, config: Config): void {
         tools: [], sessionId: agent.id, stepCount: 0, injectedThisTurn: false,
         taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
         lastInjectedIds: [],
+        lastInjected: [],
       })
     }
     agentTools.get(agent.id)!.tools.push({
@@ -402,7 +407,7 @@ export function apply(ctx: Context, config: Config): void {
         if (goal) {
           if (goal.phase === 'complete') goalProgress = 'advanced'
           else if (goal.phase === 'blocked') goalProgress = 'stalled'
-          else if (goal.phase === 'active') goalProgress = 'advanced'
+          else if (goal.phase === 'active') goalProgress = 'none'  // v2: active = in-progress, NOT success (fixes active→advanced distortion)
           else if (goal.phase === 'paused') goalProgress = 'none'  // P2: paused ≠ stalled (user may switch tasks)
         }
       } catch { /* goal service may not be available */ }
@@ -420,7 +425,7 @@ export function apply(ctx: Context, config: Config): void {
           else if (reason?.kind === 'max-tokens') goalProgress = 'stalled'
           else if (reason?.kind === 'blocked') goalProgress = 'stalled'
           else if (reason?.kind === 'aborted') goalProgress = 'stalled'  // P1: aborted = negative
-          else goalProgress = 'advanced' // unknown → assume advanced
+          else goalProgress = 'none' // v2: unknown → no conclusion (fixes "unknown → assume advanced" distortion)
         } else {
           goalProgress = toolSuccessRate >= 0.5 ? 'advanced' : 'stalled'
         }
@@ -577,11 +582,13 @@ export function apply(ctx: Context, config: Config): void {
 
     // P5: Infer task pattern from first user message
     let taskPattern: string | null = null
+    let taskMsgText = ''
     try {
       const events = agent.session.events ?? []
       // dsh user/message events carry data: UserMessage (no `turn`/`text` field);
       // use the turn boundary helper to get the real user prompt text.
       const msgText = findUserMessageText(events, turn)
+      taskMsgText = msgText
       if (msgText) {
         taskPattern = inferTaskPattern(msgText)
       }
@@ -621,6 +628,10 @@ export function apply(ctx: Context, config: Config): void {
       : (correctionEvents.length > 0 || implicitNegative) ? 'tool-derived'
       : 'model-inferred'
 
+    // v2 (stage C): semantic signature — rule-based synchronously (zero cost),
+    // LLM refinement asynchronously for higher paraphrase robustness.
+    const semanticKey = generateSemanticKeyRuleBased(taskMsgText)
+
     const expId = store.store(outcome, {
       taskPattern,
       toolsUsed,
@@ -629,9 +640,36 @@ export function apply(ctx: Context, config: Config): void {
       taskUnitId: entry.taskUnitId,
       goalId: entry.goalId,
       source: expSource,
+      semanticKey,
     })
 
     log(`turn ${turn} scored — score=${outcomeScore.toFixed(2)} | goal=${goalProgress} tools=${toolCallCount} successRate=${toolSuccessRate.toFixed(2)} steps=${stepCount} efficiency=${stepEfficiency.toFixed(2)} difficulty=${difficulty} task=${taskPattern ?? 'unknown'} guards=${guardCount} feedback=${userFeedback} implicitNeg=${implicitNegative} corrections=${correctionEvents.length} | exp ${expId}`)
+
+    // v2 (stage C): Asynchronously refine the semantic key with the LLM (higher
+    // paraphrase robustness than the rule-based fallback). Fire-and-forget.
+    if (taskMsgText && config.metaCognitionEnabled) {
+      void (async () => {
+        try {
+          let provider = agent.options?.provider
+          let model = agent.options?.model
+          if (!provider || !model) {
+            try {
+              const header = (agent.session as any).requestHeader?.()
+              provider = provider || header?.config?.provider
+              model = model || header?.config?.model
+            } catch { /* requestHeader may not be available */ }
+          }
+          const llmModel = (provider && model) ? { provider, model } : undefined
+          const refined = await generateSemanticKey(ctx, taskMsgText, llmModel)
+          if (refined) {
+            store.updateSemanticKey(expId, refined)
+            log(`semantic key refined (LLM) for ${expId}: ${refined}`)
+          }
+        } catch (err) {
+          log(`semantic key refinement error: ${(err as Error).message}`)
+        }
+      })()
+    }
 
     // I4: Extract atomic facts from this turn and write to atomic_facts table
     try {
@@ -679,13 +717,20 @@ export function apply(ctx: Context, config: Config): void {
     agentTools.delete(agent.id)
 
     // P-C: Close task unit when goal completed, or when there's no goal (per-turn task)
-    if (entry.goalId) {
-      if (goalProgress === 'advanced') {
-        agentTaskUnits.delete(agent.id)
-        log(`task unit ${entry.taskUnitId} closed (goal ${entry.goalId} advanced)`)
-      }
-    } else {
-      // K2: No goal → per-turn task unit, clean up immediately
+    // v2: On close, resolve the task-unit-level truth verdict and persist it.
+    const shouldCloseTaskUnit = entry.goalId
+      ? goalProgress === 'advanced'   // goal-driven: close only when advanced (complete)
+      : true                           // no goal: per-turn task unit, close every turn
+
+    if (shouldCloseTaskUnit) {
+      void closeTaskUnitWithVerdict(agent, entry, {
+        userFeedback,
+        goalPhase: goalService ? (goalService.get?.(agent) as any)?.phase : undefined,
+        toolSuccessRate,
+        wsDigest,
+      }).catch((err) => {
+        log(`closeTaskUnit error: ${(err as Error).message}`)
+      })
       agentTaskUnits.delete(agent.id)
     }
   })
@@ -717,13 +762,24 @@ export function apply(ctx: Context, config: Config): void {
               }
             }
           } catch { /* goal service not available */ }
-          taskUnit = { taskUnitId: ulid(), goalId, turns: 0 }
+          taskUnit = { taskUnitId: ulid(), goalId, turns: 0, acceptanceCriteria: null, startedAt: Date.now() }
           agentTaskUnits.set(agent.id, taskUnit)
         }
         agentTools.set(agent.id, {
           tools: [], sessionId: agent.id, stepCount: step, injectedThisTurn: false,
           taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
           lastInjectedIds: [],
+          lastInjected: [],
+        })
+        // v2: Persist the task-unit row (idempotent) — acceptance criteria are
+        // generated asynchronously once the task text is available below.
+        const agentCwdInit = resolveAgentCwd(agent)
+        store.createTaskUnit({
+          taskUnitId: taskUnit.taskUnitId,
+          goalId: taskUnit.goalId,
+          workspaceDigest: agentCwdInit ? String(agentCwdInit).slice(-32) : null,
+          acceptanceCriteria: null,
+          startedAt: taskUnit.startedAt,
         })
       }
 
@@ -758,6 +814,35 @@ export function apply(ctx: Context, config: Config): void {
         }
         const currentTaskPattern = msgText ? inferTaskPattern(msgText) : null
 
+        // v2: Asynchronously generate acceptance criteria at task start (L1 input).
+        // Fire-and-forget so injection latency is unaffected; criteria are persisted
+        // for the task unit and read back at close time.
+        const taskUnitForCriteria = agentTaskUnits.get(agent.id)
+        if (taskUnitForCriteria && !taskUnitForCriteria.acceptanceCriteria && msgText && config.metaCognitionEnabled) {
+          void (async () => {
+            try {
+              let provider = agent.options?.provider
+              let model = agent.options?.model
+              if (!provider || !model) {
+                try {
+                  const header = (agent.session as any).requestHeader?.()
+                  provider = provider || header?.config?.provider
+                  model = model || header?.config?.model
+                } catch { /* requestHeader may not be available */ }
+              }
+              const llmModel = (provider && model) ? { provider, model } : undefined
+              const criteria = await generateAcceptanceCriteria(ctx, msgText, llmModel)
+              if (criteria) {
+                taskUnitForCriteria.acceptanceCriteria = criteria
+                store.updateTaskUnitAcceptanceCriteria(taskUnitForCriteria.taskUnitId, criteria)
+                log(`acceptance criteria generated for task unit ${taskUnitForCriteria.taskUnitId}`)
+              }
+            } catch (err) {
+              log(`acceptance criteria generation error: ${(err as Error).message}`)
+            }
+          })()
+        }
+
         // I3/K3/K4: Sanitize searchText for FTS5 — extract keywords, strip special chars
         const rawSearchText = msgText ? msgText.slice(0, 200) : ''
         const searchText = rawSearchText
@@ -770,13 +855,23 @@ export function apply(ctx: Context, config: Config): void {
         // 任务相关度过滤（类型3）：general 是 inferTaskPattern 的兜底，无区分度。
         // 以 general 传给 query 会放大无关经验池（测试留痕多为 general）。
         const taskFilter = currentTaskPattern && currentTaskPattern !== 'general' ? currentTaskPattern : undefined
-        const records = store.query({
-          workspaceDigest: wsDigest,
+        // v2 (stage C): semantic retrieval by semantic signature first; fall back
+        // to v1 keyword/tool-sequence query when no semantic match exists.
+        const currentSemanticKey = generateSemanticKeyRuleBased(msgText)
+        let records = store.queryBySemanticKey(currentSemanticKey, {
           limit: 10,
           minScore: config.minInjectionScore,
           taskPattern: taskFilter,
-          searchText,
         })
+        if (records.length === 0) {
+          records = store.query({
+            workspaceDigest: wsDigest,
+            limit: 10,
+            minScore: config.minInjectionScore,
+            taskPattern: taskFilter,
+            searchText,
+          })
+        }
 
         // Always call next() first (waterfall contract: never short-circuit)
         // O2: next() called outside try — catch block returns decision instead of calling next() again
@@ -896,6 +991,8 @@ export function apply(ctx: Context, config: Config): void {
           entry.injectedThisTurn = true
           // J7: Record which experiences were injected for precise confidence boosting
           entry.lastInjectedIds = selected.map(r => r.id)
+          // v2: Record injected experiences + their tools + semantic key for bidirectional attribution.
+          entry.lastInjected = selected.map(r => ({ id: r.id, toolsUsed: r.toolsUsed ?? [], semanticKey: r.semanticKey ?? null }))
 
           // Inject advisory context: prepend our message to the decision's messages
           if (decision.kind === 'enter') {
@@ -1062,15 +1159,11 @@ export function apply(ctx: Context, config: Config): void {
       }
       store.updateLesson(entry.expId, reflection)
 
-      // I6/J7: Boost confidence on experiences that were injected in this turn if outcome was positive
-      if (entry.outcomeScore >= POSITIVE_OUTCOME_THRESHOLD && entry.injectedIds && entry.injectedIds.length > 0) {
-        for (const id of entry.injectedIds) {
-          if (id !== entry.expId) {
-            store.boostConfidence(id)
-          }
-        }
-        log(`J7: boosted ${entry.injectedIds.length} injected experiences (positive outcome)`)
-      }
+      // v2 (stage B): The v1 one-way J7 boost (reward injected experiences on any
+      // positive outcome) is removed — it committed the association-as-causation
+      // fallacy that D1 identified. Bidirectional attribution now lives in
+      // closeTaskUnitWithVerdict (see applyAttribution), keyed off the truth
+      // verdict + whether the experience was actually used.
 
       // Δ7.b: Correction candidate LLM classification (rule-rule catch).
       // 规则层对无语义关键词的用户纠正会漏判；此处用一次批量 LLM 判定复查本 turn
@@ -1178,6 +1271,45 @@ export function apply(ctx: Context, config: Config): void {
       log(`lesson merge error: ${(err as Error).message}`)
     }
 
+    // v2 (stage D): Arm-based paired comparison — periodically calibrate
+    // transferConfidence by effect size (injected-arm pass rate − baseline pass
+    // rate) for experiences that have accumulated enough attribution evidence.
+    try {
+      const attributed = store.listAttributedExperiences()
+      let calibrated = 0
+      for (const { experienceId, semanticKey } of attributed) {
+        const arms = store.queryAttributionArms(experienceId, semanticKey)
+        const effect = computeEffectSize(arms)
+        if (!effect.sufficient) continue
+        if (effect.direction === 'reward') {
+          store.applyEffectSizeDelta(experienceId, ARM_EFFECT_CONFIDENCE_DELTA)
+          calibrated++
+        } else if (effect.direction === 'penalty') {
+          store.applyEffectSizeDelta(experienceId, -ARM_EFFECT_CONFIDENCE_DELTA)
+          calibrated++
+        }
+      }
+      if (calibrated > 0) {
+        log(`effect-size calibration: adjusted ${calibrated} experience(s) transferConfidence`)
+      }
+    } catch (err) {
+      log(`effect-size calibration error: ${(err as Error).message}`)
+    }
+
+    // v2 (stage E): Layered memory — promote high-transfer lessons to strategy
+    // tier, demote/forget low-transfer strategy experiences (driven by
+    // transferConfidence, not raw capacity), per design-v2 §6.
+    try {
+      const promoted = store.promoteToStrategy()
+      const demoted = store.demoteFromStrategy()
+      const forgotten = store.forgetStrategy()
+      if (promoted > 0 || demoted > 0 || forgotten > 0) {
+        log(`layered memory: promoted=${promoted} demoted=${demoted} forgotten=${forgotten}`)
+      }
+    } catch (err) {
+      log(`layered memory error: ${(err as Error).message}`)
+    }
+
     // A1-b: LLM-based automatic preference distillation
     // Runs periodically during maintenance to extract high-confidence preferences
     try {
@@ -1194,6 +1326,122 @@ export function apply(ctx: Context, config: Config): void {
     const stats = store.stats()
     if (stats.total > 0) {
       log(`store stats — total=${stats.total} avgScore=${stats.avgScore.toFixed(2)} positive=${stats.positiveCount} withLessons=${stats.withLessons} youngGen=${stats.youngGenCount} oldGen=${stats.oldGenCount} highDiff=${stats.highDifficultyCount} merged=${stats.mergedCount}`)
+    }
+  }
+
+  /**
+   * v2: Resolve and persist the task-unit-level truth verdict when a task unit closes.
+   *
+   * This is the truth-ground layer entry point. It:
+   *   1. Resolves the provider/model for LLM (L1 acceptance-criteria check).
+   *   2. If acceptance criteria were generated at task start, runs the L1 judgment.
+   *   3. Calls resolveVerdict with L0 (user feedback) > L1 > L2 (hard facts) > L3 (proxy prior).
+   *   4. Persists the verdict to the task_unit table and backfills the unit's turns.
+   */
+  async function closeTaskUnitWithVerdict(
+    agent: Agent,
+    entry: {
+      taskUnitId: string
+      goalId: string | null
+      tools: { name: string; success: boolean }[]
+      lastInjected?: { id: string; toolsUsed: string[]; semanticKey: string | null }[]
+    },
+    input: {
+      userFeedback: 'positive' | 'negative' | 'none'
+      goalPhase?: 'active' | 'paused' | 'blocked' | 'complete'
+      toolSuccessRate: number
+      wsDigest: string | null
+    },
+  ): Promise<void> {
+    try {
+      // Resolve provider/model (same fallback chain as runMaintenance).
+      let provider = agent.options?.provider
+      let model = agent.options?.model
+      if (!provider || !model) {
+        try {
+          const header = (agent.session as any).requestHeader?.()
+          provider = provider || header?.config?.provider
+          model = model || header?.config?.model
+        } catch { /* requestHeader may not be available */ }
+      }
+      const llmModel = (provider && model) ? { provider, model } : undefined
+
+      // L1: acceptance-criteria self-check (only when criteria exist and LLM is available).
+      let llmJudgment: 'pass' | 'fail' | 'unknown' | undefined
+      const taskUnit = store.getTaskUnit(entry.taskUnitId)
+      const criteria = taskUnit?.acceptance_criteria ?? null
+      if (criteria && llmModel && config.metaCognitionEnabled) {
+        // Final evidence: the turn's tool outcomes (what the agent actually did).
+        const evidence = entry.tools
+          .map((t) => `${t.name}: ${t.success ? 'ok' : 'FAIL'}`)
+          .join(', ')
+        llmJudgment = (await judgeTaskOutcome(ctx, criteria, evidence, llmModel)) ?? undefined
+      }
+
+      // L0: user feedback maps to rating (positive/negative only; 'none' → undefined).
+      const userRating = input.userFeedback === 'positive'
+        ? 'positive'
+        : input.userFeedback === 'negative' ? 'negative' : undefined
+
+      // L2: hard facts from this turn's tool results.
+      const hardFacts = { toolResults: entry.tools }
+
+      // L3: proxy prior from goal phase + tool success rate.
+      const proxyPrior = {
+        goalPhase: input.goalPhase,
+        toolSuccessRate: input.toolSuccessRate,
+      }
+
+      const result = resolveVerdict({
+        userRating,
+        llmJudgment,
+        hardFacts,
+        proxyPrior,
+      })
+
+      store.closeTaskUnit({
+        taskUnitId: entry.taskUnitId,
+        verdict: result.verdict,
+        verdictSource: result.source,
+        outcomeConfidence: result.outcomeConfidence,
+        closedAt: Date.now(),
+      })
+
+      log(`task unit ${entry.taskUnitId} closed — verdict=${result.verdict} source=${result.source} confidence=${result.outcomeConfidence.toFixed(2)}`)
+
+      // v2 (stage B): Bidirectional attribution on transferConfidence.
+      // Only attribute when the verdict is a confirmed pass/fail (not unknown).
+      // usedExperiences: an injected experience counts as "used" when its tool
+      // sequence overlaps the current turn's tools (rule-based, zero-cost proxy).
+      if ((result.verdict === 'pass' || result.verdict === 'fail') && entry.lastInjected && entry.lastInjected.length > 0) {
+        const currentTools = new Set(entry.tools.map((t) => t.name).filter(Boolean))
+        const passed = result.verdict === 'pass'
+        const attribution = entry.lastInjected.map((inj) => {
+          const used = inj.toolsUsed.length === 0
+            ? false
+            : inj.toolsUsed.some((t) => currentTools.has(t))
+          return { experienceId: inj.id, used, passed, semanticKey: inj.semanticKey }
+        })
+        const usedCount = attribution.filter((a) => a.used).length
+        if (usedCount > 0) {
+          store.applyAttribution(attribution)
+          log(`attribution: ${usedCount}/${attribution.length} injected experiences used — verdict=${result.verdict}`)
+        }
+
+        // v2 (stage D): Record raw attribution triples for the arm-based paired
+        // comparison (both used and not-used, so the baseline arm can be built).
+        for (const a of attribution) {
+          store.recordAttributionEvent({
+            taskUnitId: entry.taskUnitId,
+            experienceId: a.experienceId,
+            semanticKey: a.semanticKey,
+            used: a.used,
+            passed: a.passed,
+          })
+        }
+      }
+    } catch (err) {
+      log(`closeTaskUnitWithVerdict error: ${(err as Error).message}`)
     }
   }
 

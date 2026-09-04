@@ -39,6 +39,17 @@ import {
   PROMOTE_SCORE_THRESHOLD,
   LOW_SCORE_GC_THRESHOLD,
   MERGED_OUTCOME_SCORE,
+  TRANSFER_CONFIDENCE_INITIAL,
+  TRANSFER_CONFIDENCE_MIN,
+  TRANSFER_CONFIDENCE_MAX,
+  TRANSFER_REWARD_PASS_USED,
+  TRANSFER_PENALTY_FAIL_USED,
+  TRANSFER_DECAY_FACTOR,
+  MEMORY_TIER_EVENT,
+  MEMORY_TIER_STRATEGY,
+  STRATEGY_PROMOTE_TRANSFER_THRESHOLD,
+  STRATEGY_DEMOTE_TRANSFER_THRESHOLD,
+  STRATEGY_FORGET_TRANSFER_THRESHOLD,
 } from '../types/constants.js'
 
 export interface StoreOptions {
@@ -125,7 +136,14 @@ export class ExperienceStore {
         tags TEXT,
         confidence REAL DEFAULT 1.0,
         reuse_count INTEGER DEFAULT 0,
-        source TEXT DEFAULT 'model-inferred'
+        source TEXT DEFAULT 'model-inferred',
+
+        outcome_verdict TEXT,
+        outcome_confidence REAL,
+        acceptance_criteria TEXT,
+        transfer_confidence REAL DEFAULT 0.5,
+        semantic_key TEXT,
+        memory_tier TEXT DEFAULT 'event'
       );
     `)
 
@@ -139,6 +157,12 @@ export class ExperienceStore {
     this.ensureColumn('goal_id', 'TEXT')
     this.ensureColumn('content_hash', 'TEXT')
     this.ensureColumn('source', "TEXT DEFAULT 'model-inferred'")
+    this.ensureColumn('outcome_verdict', 'TEXT')
+    this.ensureColumn('outcome_confidence', 'REAL')
+    this.ensureColumn('acceptance_criteria', 'TEXT')
+    this.ensureColumn('transfer_confidence', 'REAL DEFAULT 0.5')
+    this.ensureColumn('semantic_key', 'TEXT')
+    this.ensureColumn('memory_tier', "TEXT DEFAULT 'event'")
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiences_context ON experiences(context_hash);
@@ -151,6 +175,8 @@ export class ExperienceStore {
       CREATE INDEX IF NOT EXISTS idx_experiences_task_unit ON experiences(task_unit_id);
       CREATE INDEX IF NOT EXISTS idx_experiences_goal ON experiences(goal_id);
       CREATE INDEX IF NOT EXISTS idx_experiences_content_hash ON experiences(content_hash);
+      CREATE INDEX IF NOT EXISTS idx_experiences_semantic_key ON experiences(semantic_key);
+      CREATE INDEX IF NOT EXISTS idx_experiences_memory_tier ON experiences(memory_tier);
     `)
 
     // A3/K3: FTS5 full-text index with trigram tokenizer for CJK support
@@ -248,6 +274,45 @@ export class ExperienceStore {
     `)
     this.ensureColumnOn('correction_event', 'intent', 'TEXT')
     this.ensureColumnOn('correction_event', 'workspace_digest', 'TEXT')
+
+    // v2 Truth-ground: task-unit aggregate entity. A TaskUnit is the granularity
+    // at which a task's true outcome is judged (pass/fail/unknown), in contrast to
+    // v1's per-turn scoring. turns (experiences rows) reference task_unit_id and
+    // are backfilled with the verdict when the unit closes.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS task_unit (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT,
+        workspace_digest TEXT,
+        acceptance_criteria TEXT,
+        verdict TEXT,
+        verdict_source TEXT,
+        outcome_confidence REAL,
+        started_at INTEGER,
+        closed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_unit_goal ON task_unit(goal_id);
+      CREATE INDEX IF NOT EXISTS idx_task_unit_ws ON task_unit(workspace_digest);
+    `)
+
+    // v2 Stage D: attribution_event — raw (injected, used, passed) triples for
+    // the arm-based paired comparison (design-v2 §5.2). This is the "event layer"
+    // evidence that drives transferConfidence via effect size, distinct from the
+    // immediate bidirectional attribution of stage B.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS attribution_event (
+        id TEXT PRIMARY KEY,
+        task_unit_id TEXT NOT NULL,
+        experience_id TEXT NOT NULL,
+        semantic_key TEXT,
+        used INTEGER NOT NULL DEFAULT 0,
+        passed INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_attribution_exp ON attribution_event(experience_id);
+      CREATE INDEX IF NOT EXISTS idx_attribution_sem ON attribution_event(semantic_key);
+      CREATE INDEX IF NOT EXISTS idx_attribution_tu ON attribution_event(task_unit_id);
+    `)
   }
 
   /** Add a column to the experiences table if it doesn't already exist (migration support). */
@@ -283,6 +348,7 @@ export class ExperienceStore {
     goalId?: string | null
     source?: string
     tags?: string[]
+    semanticKey?: string | null
   }): string {
     const id = ulid()
     const taskUnitId = context.taskUnitId ?? id
@@ -302,14 +368,14 @@ export class ExperienceStore {
         context_hash, task_pattern, tools_used, workspace_digest,
         actions, outcome_score, user_feedback, lesson,
         difficulty, generation, last_injected_at, merged,
-        tags, confidence, reuse_count, content_hash, source
+        tags, confidence, reuse_count, content_hash, source, transfer_confidence, semantic_key, memory_tier
       ) VALUES (
         @id, @sessionId, @turnId, @createdAt,
         @taskUnitId, @goalId,
         @contextHash, @taskPattern, @toolsUsed, @workspaceDigest,
         @actions, @outcomeScore, @userFeedback, @lesson,
         @difficulty, @generation, @lastInjectedAt, @merged,
-        @tags, @confidence, @reuseCount, @contentHash, @source
+        @tags, @confidence, @reuseCount, @contentHash, @source, @transferConfidence, @semanticKey, @memoryTier
       )
     `)
 
@@ -337,6 +403,9 @@ export class ExperienceStore {
       reuseCount: 0,
       contentHash,
       source,
+      transferConfidence: TRANSFER_CONFIDENCE_INITIAL,
+      semanticKey: context.semanticKey ?? null,
+      memoryTier: MEMORY_TIER_EVENT,
     })
 
     // Enforce retention limit
@@ -374,6 +443,11 @@ export class ExperienceStore {
     this.db.prepare('UPDATE experiences SET lesson = ? WHERE id = ?').run(lessonText, id)
   }
 
+  /** v2 (stage C): persist the semantic signature for an experience. */
+  updateSemanticKey(id: string, semanticKey: string): void {
+    this.db.prepare('UPDATE experiences SET semantic_key = ? WHERE id = ?').run(semanticKey, id)
+  }
+
   /**
    * Increment reuse count and apply gradual confidence decay.
    * Called by the Behavior Adapter (Layer 2) when an experience is injected.
@@ -404,6 +478,216 @@ export class ExperienceStore {
     `)
 
     stmt.run({ id, maxConfidence: MAX_CONFIDENCE, boost: CONFIDENCE_BOOST })
+  }
+
+  /**
+   * v2 (stage B): Bidirectional attribution on transferConfidence.
+   *
+   * Replaces v1's one-way `boostConfidence` optimistic bias (which rewarded an
+   * injected experience whenever the turn scored high, regardless of causality).
+   *
+   * The core rule (§4.2): an injected experience's transferConfidence is only
+   * moved when it was *actually used* (usedExperiences), never on mere injection:
+   *   - pass + used → reward (the experience demonstrably helped).
+   *   - fail + used → penalty (the experience demonstrably did not help).
+   *   - not used     → no change (injection outcome is not attributable to it).
+   *
+   * This is the minimal causal ledger unit: (injected, used, verdict) triple.
+   */
+  applyAttribution(entries: {
+    experienceId: string
+    used: boolean
+    passed: boolean
+  }[]): void {
+    if (!entries || entries.length === 0) return
+    const txn = this.db.transaction(() => {
+      const reward = this.db.prepare(`
+        UPDATE experiences
+        SET transfer_confidence = MIN(@max, transfer_confidence + @reward)
+        WHERE id = @id
+      `)
+      const penalize = this.db.prepare(`
+        UPDATE experiences
+        SET transfer_confidence = MAX(@min, transfer_confidence - @penalty)
+        WHERE id = @id
+      `)
+      for (const e of entries) {
+        if (!e.used) continue
+        if (e.passed) {
+          reward.run({ id: e.experienceId, max: TRANSFER_CONFIDENCE_MAX, reward: TRANSFER_REWARD_PASS_USED })
+        } else {
+          penalize.run({ id: e.experienceId, min: TRANSFER_CONFIDENCE_MIN, penalty: TRANSFER_PENALTY_FAIL_USED })
+        }
+      }
+    })
+    txn()
+  }
+
+  /** v2 (stage B): Apply time decay to transferConfidence for records not revalidated. */
+  decayTransferConfidence(ids: string[]): void {
+    if (!ids || ids.length === 0) return
+    const stmt = this.db.prepare(`
+      UPDATE experiences
+      SET transfer_confidence = transfer_confidence * @factor
+      WHERE id IN (${ids.map(() => '?').join(',')})
+    `)
+    stmt.run(...ids.map((id) => id), { factor: TRANSFER_DECAY_FACTOR })
+  }
+
+  // -------------------------------------------------------------------------
+  // v2 stage D: arm-based paired comparison (attribution_event)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Record one (injected, used, passed) attribution triple for a closed task unit.
+   * This is the raw "event layer" evidence for the arm-based comparison (§5.2).
+   */
+  recordAttributionEvent(input: {
+    taskUnitId: string
+    experienceId: string
+    semanticKey: string | null
+    used: boolean
+    passed: boolean
+  }): void {
+    this.db.prepare(`
+      INSERT INTO attribution_event (
+        id, task_unit_id, experience_id, semantic_key, used, passed, created_at
+      ) VALUES (
+        @id, @taskUnitId, @experienceId, @semanticKey, @used, @passed, @createdAt
+      )
+    `).run({
+      id: ulid(),
+      taskUnitId: input.taskUnitId,
+      experienceId: input.experienceId,
+      semanticKey: input.semanticKey,
+      used: input.used ? 1 : 0,
+      passed: input.passed ? 1 : 0,
+      createdAt: Date.now(),
+    })
+  }
+
+  /**
+   * Aggregate raw attribution triples into arm counts for one experience within
+   * a comparable semantic cluster. The baseline arm is the subset of tasks in the
+   * same semantic_key where the experience was NOT used; the injected arm is
+   * where it WAS used.
+   */
+  queryAttributionArms(experienceId: string, semanticKey: string | null): {
+    injectedTotal: number
+    injectedPass: number
+    baselineTotal: number
+    baselinePass: number
+  } {
+    // Injected arm: tasks where this experience was used.
+    const injected = this.db.prepare(`
+      SELECT COUNT(*) AS total, SUM(passed) AS passed
+      FROM attribution_event WHERE experience_id = ? AND used = 1
+    `).get(experienceId) as { total: number; passed: number | null }
+    // Baseline arm: tasks in the same semantic cluster where this experience was NOT used.
+    let baseline: { total: number; passed: number | null }
+    if (semanticKey) {
+      baseline = this.db.prepare(`
+        SELECT COUNT(*) AS total, SUM(passed) AS passed
+        FROM attribution_event WHERE semantic_key = ? AND experience_id != ? AND used = 0
+      `).get(semanticKey, experienceId) as { total: number; passed: number | null }
+    } else {
+      baseline = { total: 0, passed: null }
+    }
+    return {
+      injectedTotal: injected.total,
+      injectedPass: injected.passed ?? 0,
+      baselineTotal: baseline.total,
+      baselinePass: baseline.passed ?? 0,
+    }
+  }
+
+  /**
+   * Apply a transferConfidence delta (positive reward / negative penalty) to an
+   * experience, clamped to [MIN, MAX]. Used by the effect-size calibration.
+   */
+  applyEffectSizeDelta(experienceId: string, delta: number): void {
+    if (delta === 0) return
+    if (delta > 0) {
+      this.db.prepare(
+        'UPDATE experiences SET transfer_confidence = MIN(@max, transfer_confidence + @delta) WHERE id = @id',
+      ).run({ id: experienceId, max: TRANSFER_CONFIDENCE_MAX, delta })
+    } else {
+      this.db.prepare(
+        'UPDATE experiences SET transfer_confidence = MAX(@min, transfer_confidence + @delta) WHERE id = @id',
+      ).run({ id: experienceId, min: TRANSFER_CONFIDENCE_MIN, delta })
+    }
+  }
+
+  /**
+   * Return distinct (experience_id, semantic_key) pairs that have accumulated
+   * attribution events, for periodic effect-size calibration.
+   */
+  listAttributedExperiences(): { experienceId: string; semanticKey: string | null }[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT experience_id, semantic_key FROM attribution_event
+    `).all() as { experience_id: string; semantic_key: string | null }[]
+    return rows.map((r) => ({ experienceId: r.experience_id, semanticKey: r.semantic_key }))
+  }
+
+  // -------------------------------------------------------------------------
+  // v2 stage E: layered memory (event → strategy tier)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Promote event-tier experiences with a lesson and high transferConfidence to
+   * the strategy tier. A strategy-tier experience is a *transferable practice*
+   * (design-v2 §6), not just a raw single-task record.
+   */
+  promoteToStrategy(): number {
+    const result = this.db.prepare(`
+      UPDATE experiences
+      SET memory_tier = @strategy
+      WHERE memory_tier = @event
+        AND lesson IS NOT NULL
+        AND merged = 0
+        AND transfer_confidence >= @threshold
+    `).run({
+      strategy: MEMORY_TIER_STRATEGY,
+      event: MEMORY_TIER_EVENT,
+      threshold: STRATEGY_PROMOTE_TRANSFER_THRESHOLD,
+    })
+    return result.changes
+  }
+
+  /**
+   * Demote strategy-tier experiences whose transferConfidence has dropped below
+   * the demote threshold back to the event tier (they have not proven
+   * transferable). Does NOT delete — they re-enter the event layer.
+   */
+  demoteFromStrategy(): number {
+    const result = this.db.prepare(`
+      UPDATE experiences
+      SET memory_tier = @event
+      WHERE memory_tier = @strategy
+        AND transfer_confidence < @threshold
+    `).run({
+      event: MEMORY_TIER_EVENT,
+      strategy: MEMORY_TIER_STRATEGY,
+      threshold: STRATEGY_DEMOTE_TRANSFER_THRESHOLD,
+    })
+    return result.changes
+  }
+
+  /**
+   * Forget strategy-tier experiences whose transferConfidence has fallen below
+   * the forget threshold. This is the only point where strategy knowledge is
+   * deleted — driven by transferConfidence (not raw capacity), per §6.
+   */
+  forgetStrategy(): number {
+    const result = this.db.prepare(`
+      DELETE FROM experiences
+      WHERE memory_tier = @strategy
+        AND transfer_confidence < @threshold
+    `).run({
+      strategy: MEMORY_TIER_STRATEGY,
+      threshold: STRATEGY_FORGET_TRANSFER_THRESHOLD,
+    })
+    return result.changes
   }
 
   // -------------------------------------------------------------------------
@@ -480,6 +764,84 @@ export class ExperienceStore {
   }
 
   /**
+   * v2 (stage C): Semantic retrieval by semantic signature.
+   *
+   * Replaces v1's tool-sequence-as-primary-key retrieval with semantic-signature
+   * matching. A task's `semantic_key` (LLM-reduced label, e.g. "add-npm-test-script")
+   * captures *what* the task is about, so two tasks using the same tools but
+   * solving different problems no longer collide (the D4 defect).
+   *
+   * Match order:
+   *   1. exact semantic_key match (highest relevance)
+   *   2. shared semantic token prefix (partial overlap, e.g. "add-npm-" prefix)
+   *   3. fallback to taskPattern match when no semantic_key exists
+   * Results are ordered by semantic similarity then transferConfidence desc.
+   */
+  queryBySemanticKey(semanticKey: string | null, opts?: {
+    limit?: number
+    minScore?: number
+    workspaceDigest?: string | null
+    taskPattern?: string | null
+  }): ExperienceRecord[] {
+    const limit = opts?.limit ?? 10
+    const minScore = opts?.minScore ?? 0.0
+
+    if (!semanticKey) {
+      // No semantic signature — fall back to taskPattern (v1 behavior).
+      if (!opts?.taskPattern) return []
+      const rows = this.db.prepare(
+        'SELECT * FROM experiences WHERE task_pattern = ? AND outcome_score >= ? AND merged = 0 ORDER BY outcome_score DESC, created_at DESC LIMIT ?',
+      ).all(opts.taskPattern, minScore, limit) as RawExperienceRow[]
+      return rows.map((r) => this.rowToRecord(r))
+    }
+
+    // Tokenize the semantic key for prefix/overlap matching.
+    const tokens = semanticKey.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 0)
+    const exactRows = this.db.prepare(
+      'SELECT * FROM experiences WHERE semantic_key = ? AND outcome_score >= ? AND merged = 0 LIMIT ?',
+    ).all(semanticKey, minScore, limit * 2) as RawExperienceRow[]
+
+    // Prefix/overlap matches: any row whose semantic_key shares a leading token.
+    let overlapRows: RawExperienceRow[] = []
+    if (tokens.length > 0) {
+      const all = this.db.prepare(
+        'SELECT * FROM experiences WHERE semantic_key IS NOT NULL AND outcome_score >= ? AND merged = 0 LIMIT 200',
+      ).all(minScore) as RawExperienceRow[]
+      overlapRows = all.filter((r) => {
+        const rk = (r.semantic_key ?? '').toLowerCase()
+        return rk !== semanticKey.toLowerCase() && tokens.some((t) => rk.startsWith(t))
+      })
+    }
+
+    const records = [...exactRows, ...overlapRows]
+      .map((r) => this.rowToRecord(r))
+      // Deduplicate by id (exact + overlap may overlap).
+      .filter((rec, i, arr) => arr.findIndex((x) => x.id === rec.id) === i)
+      // Semantic similarity: exact match = 1.0, prefix match = partial token overlap.
+      .map((rec) => ({ rec, sim: this.semanticSimilarity(semanticKey, rec.semanticKey) }))
+      .sort((a, b) => {
+        if (b.sim !== a.sim) return b.sim - a.sim
+        return (b.rec.transferConfidence ?? 0) - (a.rec.transferConfidence ?? 0)
+      })
+      .slice(0, limit)
+      .map((item) => item.rec)
+
+    return records
+  }
+
+  /** Token-overlap similarity between two semantic keys (0.0–1.0). */
+  private semanticSimilarity(a: string, b: string | null): number {
+    if (!b) return 0
+    if (a === b) return 1.0
+    const ta = new Set(a.toLowerCase().split(/[-_\s]+/).filter(Boolean))
+    const tb = new Set(b.toLowerCase().split(/[-_\s]+/).filter(Boolean))
+    if (ta.size === 0 || tb.size === 0) return 0
+    let overlap = 0
+    for (const t of ta) if (tb.has(t)) overlap++
+    return overlap / Math.max(ta.size, tb.size)
+  }
+
+  /**
    * Δ7-2 redo 对比对：对与目标序列指纹相同的既有经验做轻度「打压」（降置信度），
    * 使被用户纠正/重做过的做法更不容易被再次注入。返回受影响条数。
    */
@@ -494,6 +856,80 @@ export class ExperienceStore {
   /** Δ7.1: persist LLM/rule-based extracted intent for a correction event. */
   updateCorrectionIntent(eventId: string, intent: string): void {
     this.db.prepare('UPDATE correction_event SET intent = ? WHERE id = ?').run(intent, eventId)
+  }
+
+  // -------------------------------------------------------------------------
+  // Task unit (v2 truth-ground) — aggregate entity for task-level verdicts
+  // -------------------------------------------------------------------------
+
+  /** Create a task-unit row (idempotent by id). */
+  createTaskUnit(input: {
+    taskUnitId: string
+    goalId: string | null
+    workspaceDigest: string | null
+    acceptanceCriteria: string | null
+    startedAt: number
+  }): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO task_unit (
+        id, goal_id, workspace_digest, acceptance_criteria, started_at
+      ) VALUES (
+        @id, @goalId, @workspaceDigest, @acceptanceCriteria, @startedAt
+      )
+    `).run({
+      id: input.taskUnitId,
+      goalId: input.goalId,
+      workspaceDigest: input.workspaceDigest,
+      acceptanceCriteria: input.acceptanceCriteria,
+      startedAt: input.startedAt,
+    })
+  }
+
+  /** Persist the resolved verdict for a task unit and backfill its turns. */
+  closeTaskUnit(input: {
+    taskUnitId: string
+    verdict: string
+    verdictSource: string
+    outcomeConfidence: number
+    closedAt: number
+  }): void {
+    const txn = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE task_unit
+        SET verdict = @verdict,
+            verdict_source = @verdictSource,
+            outcome_confidence = @outcomeConfidence,
+            closed_at = @closedAt
+        WHERE id = @id
+      `).run({
+        id: input.taskUnitId,
+        verdict: input.verdict,
+        verdictSource: input.verdictSource,
+        outcomeConfidence: input.outcomeConfidence,
+        closedAt: input.closedAt,
+      })
+      // Backfill all turns belonging to this task unit with the resolved verdict.
+      this.db.prepare(`
+        UPDATE experiences
+        SET outcome_verdict = @verdict, outcome_confidence = @outcomeConfidence
+        WHERE task_unit_id = @id
+      `).run({
+        id: input.taskUnitId,
+        verdict: input.verdict,
+        outcomeConfidence: input.outcomeConfidence,
+      })
+    })
+    txn()
+  }
+
+  /** Read a task-unit row by id (undefined when absent). */
+  getTaskUnit(taskUnitId: string): RawTaskUnitRow | undefined {
+    return this.db.prepare('SELECT * FROM task_unit WHERE id = ?').get(taskUnitId) as RawTaskUnitRow | undefined
+  }
+
+  /** Persist the acceptance criteria for a task unit (generated at task start). */
+  updateTaskUnitAcceptanceCriteria(taskUnitId: string, acceptanceCriteria: string): void {
+    this.db.prepare('UPDATE task_unit SET acceptance_criteria = ? WHERE id = ?').run(acceptanceCriteria, taskUnitId)
   }
 
   // -------------------------------------------------------------------------
@@ -1118,6 +1554,9 @@ export class ExperienceStore {
       confidence: row.confidence,
       reuseCount: row.reuse_count,
       source: row.source ?? 'model-inferred',
+      transferConfidence: row.transfer_confidence ?? TRANSFER_CONFIDENCE_INITIAL,
+      semanticKey: row.semantic_key ?? null,
+      memoryTier: (row.memory_tier ?? MEMORY_TIER_EVENT) as 'event' | 'strategy',
     }
   }
 
@@ -1571,6 +2010,8 @@ export class ExperienceStore {
     this.db.exec('DELETE FROM experiences')
     this.db.exec('DELETE FROM atomic_facts')
     this.db.exec('DELETE FROM correction_event')
+    this.db.exec('DELETE FROM task_unit')
+    this.db.exec('DELETE FROM attribution_event')
     // P6: Rebuild FTS tables to remove stale index entries
     try {
       this.db.exec(`INSERT INTO experiences_fts(experiences_fts) VALUES('rebuild')`)
@@ -1603,6 +2044,24 @@ interface RawExperienceRow {
   confidence: number
   reuse_count: number
   source: string
+  outcome_verdict: string | null
+  outcome_confidence: number | null
+  acceptance_criteria: string | null
+  transfer_confidence: number | null
+  semantic_key: string | null
+  memory_tier: string | null
+}
+
+interface RawTaskUnitRow {
+  id: string
+  goal_id: string | null
+  workspace_digest: string | null
+  acceptance_criteria: string | null
+  verdict: string | null
+  verdict_source: string | null
+  outcome_confidence: number | null
+  started_at: number | null
+  closed_at: number | null
 }
 
 interface RawCorrectionEventRow {

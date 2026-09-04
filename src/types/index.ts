@@ -12,6 +12,10 @@ import {
   STEP_EFFICIENCY_DECAY,
   LOW_DIFFICULTY_MAX_STEPS,
   MEDIUM_DIFFICULTY_MAX_STEPS,
+  VERDICT_CONFIDENCE_L0,
+  VERDICT_CONFIDENCE_L1,
+  VERDICT_CONFIDENCE_L2,
+  VERDICT_CONFIDENCE_L3,
 } from './constants.js'
 
 // ---------------------------------------------------------------------------
@@ -37,6 +41,59 @@ export interface TurnOutcome {
   /** Composite score 0.0–1.0, weighted from the fields above. */
   outcomeScore: number
   timestamp: number
+}
+
+// ---------------------------------------------------------------------------
+// Truth-ground layer (v2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The task-unit-level result verdict — the "did the task actually get done"
+ * signal that v1's turn-level scoring lacked.
+ * - pass:    the task was confirmed done (user feedback or acceptance criteria).
+ * - fail:    the task was confirmed NOT done.
+ * - unknown: no trustworthy signal available; must NOT be treated as success.
+ */
+export type OutcomeVerdict = 'pass' | 'fail' | 'unknown'
+
+/**
+ * The provenance level of a verdict, ordered by trustworthiness.
+ * L0 = user-confirmed, L1 = acceptance-criteria self-check, L2 = hard observable
+ * fact (exit code / test result), L3 = process-proxy weak prior.
+ */
+export type VerdictSource = 'L0' | 'L1' | 'L2' | 'L3'
+
+/**
+ * A task-unit-level outcome, produced when a TaskUnit closes.
+ * This is the ground-truth record that v1's per-turn `TurnOutcome` feeds into.
+ */
+export interface TaskUnitOutcome {
+  taskUnitId: string
+  goalId: string | null
+  workspaceDigest: string | null
+  /** The resolved verdict. */
+  verdict: OutcomeVerdict
+  /** Which signal level produced the verdict. */
+  source: VerdictSource
+  /** Confidence that the verdict itself is correct (0.0–1.0), derived from source. */
+  outcomeConfidence: number
+  /** Acceptance criteria generated at task start (L1 input), when present. */
+  acceptanceCriteria: string | null
+  /** Unix epoch ms when the TaskUnit closed. */
+  closedAt: number
+}
+
+/**
+ * Map a verdict source level to the confidence that the verdict is correct.
+ * L0 (user) is fully trusted; L3 (process proxy) is a weak prior.
+ */
+export function computeVerdictConfidence(source: VerdictSource): number {
+  switch (source) {
+    case 'L0': return VERDICT_CONFIDENCE_L0
+    case 'L1': return VERDICT_CONFIDENCE_L1
+    case 'L2': return VERDICT_CONFIDENCE_L2
+    case 'L3': return VERDICT_CONFIDENCE_L3
+  }
 }
 
 /**
@@ -111,6 +168,12 @@ export interface ExperienceRecord {
   confidence: number
   reuseCount: number
   source: string // B1: 'user-confirmed' | 'tool-derived' | 'model-inferred' | 'chat-mention'
+  /** v2: transfer usefulness (how well this experience transfers to new tasks), driven by bidirectional attribution. */
+  transferConfidence: number
+  /** v2: semantic signature of the task (LLM-reduced, or rule-based fallback). Used for semantic retrieval + clustering. */
+  semanticKey: string | null
+  /** v2: cognitive value tier ('event' raw record vs 'strategy' transferable practice). */
+  memoryTier: 'event' | 'strategy'
 }
 
 /**

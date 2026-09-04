@@ -208,3 +208,102 @@ Example: [null, {"type":"redo"}, null]`
     return null
   }
 }
+
+/**
+ * L1 (v2): 生成可执行验收标准（acceptance criteria）。
+ *
+ * 任务开始时调用一次，产出「可客观验证」的完成判定清单（如"仓库根目录存在
+ * hello.js 且 `node hello.js` 退出码为 0"），供任务结束时 judgeTaskOutcome 对照。
+ * 关键：criteria 在任务开始前生成，避免事后诸葛亮式自评偏差。
+ *
+ * 返回 null 当 LLM 不可用或无法生成（纯聊天/开放式任务 → 由调用方落 unknown）。
+ */
+export async function generateAcceptanceCriteria(
+  ctx: any,
+  taskText: string,
+  model?: { provider: string; model: string },
+): Promise<string | null> {
+  if (!taskText || taskText.trim().length === 0) return null
+  const prompt = `You generate objectively verifiable acceptance criteria for an agent task.
+
+Goal: produce a short checklist of concrete, machine-checkable success conditions. Favor observable facts (file exists, command exit code 0, tests pass, output matches) over subjective judgments. If the task is open-ended chat or cannot be objectively verified, respond with the single word NONE.
+
+## Task
+${taskText.slice(0, 2000)}
+
+## Output
+Respond with ONLY the criteria, one line each, no markdown, no preamble. Or respond with ONLY "NONE" if the task cannot be objectively verified.`
+  const response = await tryLLMComplete(ctx, prompt, model)
+  if (!response) return null
+  const cleaned = response.trim().replace(/^```(?:text)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  if (!cleaned || cleaned.toUpperCase() === 'NONE') return null
+  return cleaned.slice(0, 2000)
+}
+
+/**
+ * L1 (v2): 对照验收标准判定任务是否达成。
+ *
+ * 任务结束时调用，LLM 对照任务开始前生成的 criteria + 最终产物证据，输出
+ * pass / fail / unknown。unknown 表示证据不足以判定（拿不准就说不知道，
+ * 不臆断）。返回 null 当 LLM 不可用（由上层回退到 L2/L3）。
+ */
+export async function judgeTaskOutcome(
+  ctx: any,
+  acceptanceCriteria: string,
+  finalEvidence: string,
+  model?: { provider: string; model: string },
+): Promise<'pass' | 'fail' | 'unknown' | null> {
+  if (!acceptanceCriteria || acceptanceCriteria.trim().length === 0) return null
+  const prompt = `You judge whether an agent task met its acceptance criteria.
+
+## Acceptance criteria
+${acceptanceCriteria}
+
+## Final evidence (what the agent actually produced / observed)
+${finalEvidence.slice(0, 4000) || '(no evidence provided)'}
+
+## Task
+Compare the evidence against each criterion. Respond with EXACTLY one word:
+- "pass" if all material criteria are clearly satisfied
+- "fail" if any material criterion is clearly NOT satisfied
+- "unknown" if the evidence is insufficient to judge
+
+Do not hallucinate success. When in doubt, say "unknown".`
+  const response = await tryLLMComplete(ctx, prompt, model)
+  if (!response) return null
+  const cleaned = response.trim().toLowerCase().replace(/^[^a-z]+|[^a-z]+$/g, '')
+  if (cleaned === 'pass') return 'pass'
+  if (cleaned === 'fail') return 'fail'
+  if (cleaned === 'unknown') return 'unknown'
+  return null
+}
+
+/**
+ * v2 (stage C): Generate a semantic signature (semantic_key) for a task.
+ *
+ * Reduces the task text to a stable, compact, kebab-case semantic label that
+ * captures *what* the task is about (e.g. "add-npm-test-script"), independent of
+ * which tools were used. This replaces tool-sequence as the primary retrieval key
+ * (D4: same tools, different tasks no longer collide).
+ *
+ * Returns null when the LLM is unavailable (caller falls back to rule-based).
+ */
+export async function generateSemanticKey(
+  ctx: any,
+  taskText: string,
+  model?: { provider: string; model: string },
+): Promise<string | null> {
+  if (!taskText || taskText.trim().length === 0) return null
+  const prompt = `Reduce this agent task to a single stable kebab-case semantic label (lowercase, hyphen-separated, max 4 words) that captures WHAT the task is about, not the tools used. Examples: "add-npm-test-script", "fix-login-timeout", "migrate-webpack-to-vite".
+
+## Task
+${taskText.slice(0, 2000)}
+
+## Output
+Respond with ONLY the label, no markdown, no punctuation, no spaces.`
+  const response = await tryLLMComplete(ctx, prompt, model)
+  if (!response) return null
+  const cleaned = response.trim().toLowerCase().replace(/^```(?:text)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  if (!cleaned) return null
+  return cleaned.slice(0, 80)
+}

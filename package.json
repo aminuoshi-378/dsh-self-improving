@@ -13,7 +13,12 @@
   "files": ["dist", "cordis.yml"],
   "scripts": {
     "build": "tsc",
-    "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts && tsx test/memory-benchmark.test.ts && tsx test/advanced-features.test.ts && tsx test/adaptive-strategy.test.ts && tsx test/event-parsing.test.ts && tsx test/correction.test.ts",
+    "test": "tsx test/experience-store.test.ts && tsx test/outcome-evaluator.test.ts && tsx test/behavior-adapter.test.ts && tsx test/meta-cognition.test.ts && tsx test/memory-benchmark.test.ts && tsx test/advanced-features.test.ts && tsx test/adaptive-strategy.test.ts && tsx test/event-parsing.test.ts && tsx test/correction.test.ts && tsx test/truth-ground.test.ts && tsx test/attribution.test.ts && tsx test/semantic-key.test.ts && tsx test/attribution-effect.test.ts && tsx test/layered-memory.test.ts",
+    "test:truth": "tsx test/truth-ground.test.ts",
+    "test:attribution": "tsx test/attribution.test.ts",
+    "test:semantic": "tsx test/semantic-key.test.ts",
+    "test:effect": "tsx test/attribution-effect.test.ts",
+    "test:memory-tier": "tsx test/layered-memory.test.ts",
     "test:store": "tsx test/experience-store.test.ts",
     "test:evaluator": "tsx test/outcome-evaluator.test.ts",
     "test:adapter": "tsx test/behavior-adapter.test.ts",

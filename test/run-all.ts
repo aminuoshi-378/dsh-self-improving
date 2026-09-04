@@ -16,6 +16,11 @@ const testFiles = [
   'memory-benchmark.test.ts',
   'advanced-features.test.ts',
   'correction.test.ts',
+  'truth-ground.test.ts',
+  'attribution.test.ts',
+  'semantic-key.test.ts',
+  'attribution-effect.test.ts',
+  'layered-memory.test.ts',
 ]
 
 let totalPassed = 0
