@@ -922,6 +922,15 @@ export class ExperienceStore {
     txn()
   }
 
+  /**
+   * Persist a late-arriving explicit user feedback onto an experience.
+   * Used by the L0 feedback backfill: no-goal task units close at turn-stopping
+   * before the user rates the reply, so the rating is applied retroactively.
+   */
+  updateExperienceFeedback(expId: string, feedback: 'positive' | 'negative'): void {
+    this.db.prepare('UPDATE experiences SET user_feedback = ? WHERE id = ?').run(feedback, expId)
+  }
+
   /** Read a task-unit row by id (undefined when absent). */
   getTaskUnit(taskUnitId: string): RawTaskUnitRow | undefined {
     return this.db.prepare('SELECT * FROM task_unit WHERE id = ?').get(taskUnitId) as RawTaskUnitRow | undefined

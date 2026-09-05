@@ -236,6 +236,20 @@ export function apply(ctx: Context, config: Config): void {
   // When no goal, each turn is its own task unit (default).
   const agentTaskUnits = new Map<string, { taskUnitId: string; goalId: string | null; turns: number; acceptanceCriteria: string | null; startedAt: number }>()
 
+  // Feedback timing guard (v2 L0 backfill): no-goal / per-turn task units close
+  // at turn-stopping — BEFORE the user has a chance to rate the assistant reply —
+  // so the synchronous feedback read in turn-stopping can structurally never see it.
+  // Buffer each task unit's assistant message seqs + exp + injection info, then a
+  // later `applyL0FeedbackBackfill` (next turn / maintenance) upgrades the verdict
+  // to L0 once the rating arrives. Keyed agentId → { taskUnitId → unit }.
+  const pendingL0 = new Map<string, Map<string, {
+    assistantSeqs: Set<number>
+    assistantMids: Set<string>
+    expId: string | null
+    tools: string[]
+    lastInjected: { id: string; toolsUsed: string[]; semanticKey: string | null }[]
+  }>>()
+
   // --- Layer 1: Observe tool outcomes via tools/result ---
   ctx.on('tools/result', (exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) => {
     const agent = exec.agent
@@ -283,6 +297,12 @@ export function apply(ctx: Context, config: Config): void {
     const entry = agentTools.get(agent.id)
     const agentCwd = resolveAgentCwd(agent)
     const wsDigestTop = agentCwd ? String(agentCwd).slice(-32) : null
+
+    // v2 L0 feedback backfill — sweep FIRST, before any early-return (no-tool /
+    // low-value turns must still flush prior turns' late user feedback).
+    void applyL0FeedbackBackfill(agent).catch((err) => {
+      log(`L0 feedback backfill error: ${(err as Error).message}`)
+    })
 
     // Δ7.b/fix: 纠错检测最先执行，独立于 entry——「无工具/低价值」的纯对话性纠正
     // turn 也必须被捕获（用户纠正恰多在无工具调用的对话轮），否则会被下方的
@@ -532,16 +552,18 @@ export function apply(ctx: Context, config: Config): void {
         const result = await feedbackService.list({ sessionId: agent.session.id })
         const items = (result as any)?.value?.items ?? (result as any)?.items ?? []
         if (Array.isArray(items) && items.length > 0) {
-          const turnAssistantSeqs = new Set<number>()
+          const turnAssistantIds = new Set<string | number>()
           const events = agent.session.events ?? []
           for (const e of events) {
             if (e.type === 'assistant/message' && (e as any).data?.turn === turn) {
-              turnAssistantSeqs.add((e as any).seq)
+              if ((e as any).seq != null) turnAssistantIds.add((e as any).seq)
+              const mid = (e as any).data?.message?.id
+              if (mid) turnAssistantIds.add(String(mid))
             }
           }
           const turnFeedback = items.filter((item: any) =>
-            turnAssistantSeqs.has((item as any).messageSeq) ||
-            turnAssistantSeqs.has((item as any).messageId),
+            turnAssistantIds.has(item.messageSeq) ||
+            turnAssistantIds.has(item.messageId),
           )
           if (turnFeedback.length > 0) {
             const hasNegative = turnFeedback.some((f: any) => f.rating === 'negative')
@@ -715,6 +737,43 @@ export function apply(ctx: Context, config: Config): void {
 
     // Clean up agent tool tracking for next turn
     agentTools.delete(agent.id)
+
+    // P-C / v2 L0 backfill: buffer this turn's task unit so a late user rating
+    // (which arrives only after the reply is shown, i.e. after we're here) can be
+    // applied by a later sweep. Skip when feedback was already seen synchronously.
+    if (entry && userFeedback === 'none') {
+      const seqs = new Set<number>()
+      const mids = new Set<string>()
+      try {
+        const events = agent.session.events ?? []
+        for (const e of events) {
+          if (e.type === 'assistant/message' && (e as any).data?.turn === turn) {
+            if ((e as any).seq != null) seqs.add((e as any).seq)
+            // L0 feedback keys by dsh message uuid (feedback.messageId == message.id),
+            // which is NOT the numeric event seq — collect both channels.
+            const mid = (e as any).data?.message?.id
+            if (mid) mids.add(String(mid))
+          }
+        }
+      } catch { /* session events not available */ }
+      if ((seqs.size > 0 || mids.size > 0) && expId) {
+        const map = pendingL0.get(agent.id) ?? new Map()
+        map.set(entry.taskUnitId, {
+          assistantSeqs: seqs,
+          assistantMids: mids,
+          expId,
+          tools: toolsUsed,
+          lastInjected: entry.lastInjected,
+        })
+        pendingL0.set(agent.id, map)
+      }
+    }
+
+    // Sweep for late feedback from PRIOR turns (this turn's own rating, if any,
+    // will be caught by the next turn's sweep).
+    void applyL0FeedbackBackfill(agent).catch((err) => {
+      log(`L0 feedback backfill error: ${(err as Error).message}`)
+    })
 
     // P-C: Close task unit when goal completed, or when there's no goal (per-turn task)
     // v2: On close, resolve the task-unit-level truth verdict and persist it.
@@ -1114,6 +1173,12 @@ export function apply(ctx: Context, config: Config): void {
   // plain function invoked from `agent/turn-stopping` (which carries the agent,
   // giving us the provider/model needed for LLM reflection).
   async function runMaintenance(agent: Agent): Promise<void> {
+    // v2 L0 backfill: sweep pending task units for late user feedback. Runs on
+    // every maintenance so a rating on the final turn is still picked up.
+    await applyL0FeedbackBackfill(agent).catch((err) => {
+      log(`L0 feedback backfill error: ${(err as Error).message}`)
+    })
+
     // W1: provider/model for LLM calls. agent.options may be empty (the real
     // route is resolved per-request); fall back to the session's request header
     // (the last actually-used provider/model), then give up → rule-based.
@@ -1442,6 +1507,81 @@ export function apply(ctx: Context, config: Config): void {
       }
     } catch (err) {
       log(`closeTaskUnitWithVerdict error: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * v2 (L0 backfill): apply late-arriving explicit user feedback that turn-stopping
+   * structurally missed (no-goal units close before the user rates the reply).
+   *
+   * Polls the messageFeedback service, matches ratings to buffered task units by
+   * assistant-message seq, upgrades the unit's verdict to L0 (highest confidence),
+   * backfills the experience's feedback, and re-runs bidirectional attribution.
+   */
+  async function applyL0FeedbackBackfill(agent: Agent): Promise<void> {
+    try {
+      const feedbackService = ctx.get('messageFeedback')
+      if (!feedbackService || typeof feedbackService.list !== 'function') return
+      const pending = pendingL0.get(agent.id)
+      if (!pending || pending.size === 0) return
+
+      const result = await feedbackService.list({ sessionId: agent.session.id })
+      const items = (result as any)?.value?.items ?? (result as any)?.items ?? []
+      log(`[L0] sweep pending=${pending.size} items=${Array.isArray(items) ? items.length : 'n/a'} firstFeedback=${items && items[0] ? `${items[0].rating}@${items[0].messageId ?? items[0].messageSeq}` : 'none'}`)
+      if (!Array.isArray(items) || items.length === 0) return
+
+      const byKey = new Map<number | string, any>()
+      for (const item of items) {
+        if (item && item.messageSeq != null) byKey.set(item.messageSeq, item)
+        if (item && item.messageId != null) byKey.set(item.messageId, item)
+      }
+
+      for (const [taskUnitId, unit] of [...pending]) {
+        const feedback = [...unit.assistantSeqs, ...unit.assistantMids]
+          .map((k) => byKey.get(k))
+          .find((f): f is any => !!f && (f.rating === 'positive' || f.rating === 'negative'))
+        if (!feedback) continue // not rated yet → kept pending for a later sweep
+        pending.delete(taskUnitId)
+
+        const verdict = feedback.rating === 'positive' ? 'pass' : 'fail'
+        store.closeTaskUnit({
+          taskUnitId,
+          verdict,
+          verdictSource: 'L0',
+          outcomeConfidence: 1,
+          closedAt: Date.now(),
+        })
+        if (unit.expId) store.updateExperienceFeedback(unit.expId, feedback.rating)
+        log(`[L0] late feedback backfill: task unit ${taskUnitId} → ${verdict} (source=L0, confidence=1.0)`)
+
+        // Retroactive bidirectional attribution using the buffered injection info.
+        if (unit.lastInjected && unit.lastInjected.length > 0) {
+          const passed = verdict === 'pass'
+          const currentTools = new Set(unit.tools)
+          const attribution = unit.lastInjected.map((inj) => ({
+            experienceId: inj.id,
+            used: inj.toolsUsed.length === 0
+              ? false
+              : inj.toolsUsed.some((t) => currentTools.has(t)),
+            passed,
+            semanticKey: inj.semanticKey,
+          }))
+          const usedCount = attribution.filter((a) => a.used).length
+          if (usedCount > 0) store.applyAttribution(attribution)
+          for (const a of attribution) {
+            store.recordAttributionEvent({
+              taskUnitId,
+              experienceId: a.experienceId,
+              semanticKey: a.semanticKey,
+              used: a.used,
+              passed: a.passed,
+            })
+          }
+          log(`[L0] attribution backfill: ${usedCount}/${attribution.length} used — verdict=${verdict}`)
+        }
+      }
+    } catch (err) {
+      log(`L0 feedback backfill error: ${(err as Error).message}`)
     }
   }
 

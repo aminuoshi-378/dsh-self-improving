@@ -6,6 +6,18 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 修复 — L0 反馈回填时序缺陷（2026-09-05）
+
+无 goal 任务在 `turn-stopping` 关闭任务单元时，用户尚未看到回复，同步读反馈结构性拿不到，导致 L0 真值永远漏采（真机观测到本应 L0 的任务落到 `source=L3 confidence=0.30`）。定位后转延迟回填 + 双通道匹配修复：
+
+* **延迟回填缓冲**：新增 `pendingL0` 缓冲（agentId → taskUnitId → assistant 消息 seq + 消息 uuid + exp + 注入信息），turn-stopping 将本 turn 单元登记；回填扫描提到 turn-stopping 顶部（先于 no-tool/low-value 早退），每轮与 maintenance 对缓冲单元重读 `messageFeedback.list`，命中即以 `verdict=source=L0, confidence=1` 覆盖关闭、`updateExperienceFeedback` 回写经验、并用缓冲的注入信息重跑双向归因。
+
+* **消息 ID 双通道匹配（根因）**：feedback 条目只有 `messageId`（dsh 消息 uuid）而无数字 `messageSeq`，原实现仅以数字 seq 建索引查询，`messageId` 索引无人命中 → 回填永不触发。改为采集 assistant 消息的 `e.data.message.id`（uuid）与 `seq` 双通道匹配；同步 L0 读取的同病一并修复。
+
+* **新增 `store.updateExperienceFeedback(expId, feedback)`**：把回填的正/负反馈写入 `experiences.user_feedback`。
+
+* 验证：`tsc` 编译、全量测试全绿；真机（dsh web + 浏览器自动化）点赞后下一轮日志输出 `[L0] late feedback backfill: task unit … → pass (source=L0, confidence=1.0)`，回填覆盖成功。
+
 ### 新增 — v2 认知闭环重构：五个阶段根治四大核心缺陷（2026-09-04）
 
 将「自进化」从单向乐观偏置的经验库，重构为「预测 → 行动 → 判定 → 归因 → 修正」的认知闭环。方案详见 `docs/design-v2.md`，五个阶段均已实现并验证（累计新增 52 个测试，总测试数 109→188）：
