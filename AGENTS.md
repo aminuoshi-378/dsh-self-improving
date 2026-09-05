@@ -223,6 +223,7 @@
 6. **link 与 tarball 都能被 WebUI 管理**：通过 `dsh plugin add <tarball>` 或 `link:` workspace 方式安装的插件都会出现在 WebUI 插件列表里，前提是在 profile 的 `package.json` 里声明依赖并注册到 `dsh.profile.bundles`。
 7. **避免 bundle id 冲突**：同一个插件如果既在 dsh 仓库 `packages/` 目录又通过 tarball 安装，会报 `duplicate loader entry id`。解决：workspace 包的 `package.json` 不要 `dsh` 字段。
 8. **提交前验证**：`pnpm test` 和 `pnpm run build` 都跑过确认通过再提交。
+9. **改后判断是否需要重启 dsh**：改动后先判断「是否要重启 dsh 才算生效」，需要则重启后再验证，不要改完就当已生效。判断依据：改动影响**已运行进程的运行时行为**（`src/` 逻辑、系统提示词注入、打包/配置等，因运行中的 node 进程加载的是旧 dist，不会热更）→ 必须重启；仅改文档/注释/测试/不改运行时逻辑 → 无需重启。重启方式：先终止旧后台 dsh job，再后台非阻塞方式 `dsh --profile web --no-open`，随后用浏览器自动化做真机验证。
 
 ---
 
