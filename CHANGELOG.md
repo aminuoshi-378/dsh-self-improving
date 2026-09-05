@@ -6,6 +6,12 @@
 
 ## [Unreleased](https://github.com/aminuoshi-378/dsh-self-improving/compare/v0.1.0...HEAD)
 
+### 规范 — experience-store 消除 SELECT *（2026-09-05）
+
+* 落实 AGENTS.md 4.10「查询用明确列名，禁用 SELECT *」：把 `experience-store.ts` 全部 20 处 `SELECT *`（含 FTS 别名 `e.*`/`f.*`）置换为显式列名。抽取 `experiences` / `task_unit` / `correction_event` / `atomic_facts` 四张表的列名常量（取自既有行类型定义），普通查询与 FTS 别名前缀查询统一引用，避免散落列名字面量，也规避无字段白名单导致的隐式结构耦合。
+
+* 验证：`tsc` 编译、全量测试全绿；grep 确认无残留 `SELECT *`（仅常量说明注释）。
+
 ### 修复 — L0 反馈回填时序缺陷（2026-09-05）
 
 无 goal 任务在 `turn-stopping` 关闭任务单元时，用户尚未看到回复，同步读反馈结构性拿不到，导致 L0 真值永远漏采（真机观测到本应 L0 的任务落到 `source=L3 confidence=0.30`）。定位后转延迟回填 + 双通道匹配修复：

@@ -735,7 +735,7 @@ export class ExperienceStore {
   /** Read correction events for a turn (lesson / refinement context). */
   queryCorrectionEventsByTurn(turnId: string): CorrectionEvent[] {
     const rows = this.db.prepare(
-      'SELECT * FROM correction_event WHERE turn_id = ? ORDER BY seq ASC',
+      `SELECT ${CORRECTION_EVENT_COLUMNS} FROM correction_event WHERE turn_id = ? ORDER BY seq ASC`,
     ).all(turnId) as RawCorrectionEventRow[]
     return rows.map(rowToCorrectionEvent)
   }
@@ -744,10 +744,10 @@ export class ExperienceStore {
   queryCorrectionEvents(limit: number = 10, workspaceDigest?: string | null): CorrectionEvent[] {
     const rows = workspaceDigest
       ? this.db.prepare(
-          'SELECT * FROM correction_event WHERE workspace_digest = ? ORDER BY created_at DESC LIMIT ?',
+          `SELECT ${CORRECTION_EVENT_COLUMNS} FROM correction_event WHERE workspace_digest = ? ORDER BY created_at DESC LIMIT ?`,
         ).all(workspaceDigest, limit) as RawCorrectionEventRow[]
       : this.db.prepare(
-          'SELECT * FROM correction_event ORDER BY created_at DESC LIMIT ?',
+          `SELECT ${CORRECTION_EVENT_COLUMNS} FROM correction_event ORDER BY created_at DESC LIMIT ?`,
         ).all(limit) as RawCorrectionEventRow[]
     return rows.map(rowToCorrectionEvent)
   }
@@ -758,7 +758,7 @@ export class ExperienceStore {
    */
   queryExperiencesByContentHash(seqHash: string, limit: number = 5): ExperienceRecord[] {
     const rows = this.db.prepare(
-      'SELECT * FROM experiences WHERE content_hash = ? ORDER BY created_at DESC LIMIT ?',
+      `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE content_hash = ? ORDER BY created_at DESC LIMIT ?`,
     ).all(seqHash, limit) as RawExperienceRow[]
     return rows.map((r) => this.rowToRecord(r))
   }
@@ -790,7 +790,7 @@ export class ExperienceStore {
       // No semantic signature — fall back to taskPattern (v1 behavior).
       if (!opts?.taskPattern) return []
       const rows = this.db.prepare(
-        'SELECT * FROM experiences WHERE task_pattern = ? AND outcome_score >= ? AND merged = 0 ORDER BY outcome_score DESC, created_at DESC LIMIT ?',
+        `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE task_pattern = ? AND outcome_score >= ? AND merged = 0 ORDER BY outcome_score DESC, created_at DESC LIMIT ?`,
       ).all(opts.taskPattern, minScore, limit) as RawExperienceRow[]
       return rows.map((r) => this.rowToRecord(r))
     }
@@ -798,14 +798,14 @@ export class ExperienceStore {
     // Tokenize the semantic key for prefix/overlap matching.
     const tokens = semanticKey.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 0)
     const exactRows = this.db.prepare(
-      'SELECT * FROM experiences WHERE semantic_key = ? AND outcome_score >= ? AND merged = 0 LIMIT ?',
+      `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE semantic_key = ? AND outcome_score >= ? AND merged = 0 LIMIT ?`,
     ).all(semanticKey, minScore, limit * 2) as RawExperienceRow[]
 
     // Prefix/overlap matches: any row whose semantic_key shares a leading token.
     let overlapRows: RawExperienceRow[] = []
     if (tokens.length > 0) {
       const all = this.db.prepare(
-        'SELECT * FROM experiences WHERE semantic_key IS NOT NULL AND outcome_score >= ? AND merged = 0 LIMIT 200',
+        `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE semantic_key IS NOT NULL AND outcome_score >= ? AND merged = 0 LIMIT 200`,
       ).all(minScore) as RawExperienceRow[]
       overlapRows = all.filter((r) => {
         const rk = (r.semantic_key ?? '').toLowerCase()
@@ -933,7 +933,7 @@ export class ExperienceStore {
 
   /** Read a task-unit row by id (undefined when absent). */
   getTaskUnit(taskUnitId: string): RawTaskUnitRow | undefined {
-    return this.db.prepare('SELECT * FROM task_unit WHERE id = ?').get(taskUnitId) as RawTaskUnitRow | undefined
+    return this.db.prepare(`SELECT ${TASK_UNIT_COLUMNS} FROM task_unit WHERE id = ?`).get(taskUnitId) as RawTaskUnitRow | undefined
   }
 
   /** Persist the acceptance criteria for a task unit (generated at task start). */
@@ -991,7 +991,7 @@ export class ExperienceStore {
         if (safeQuery) {
           // O4: Include taskPattern filter in FTS5 query
           let ftsSql = `
-            SELECT e.* FROM experiences e
+            SELECT ${EXPERIENCES_COLUMNS.split(', ').map(c => 'e.' + c).join(', ')} FROM experiences e
             JOIN experiences_fts f ON e.rowid = f.rowid
             WHERE experiences_fts MATCH @matchText
               AND e.outcome_score >= @minScore
@@ -1004,7 +1004,7 @@ export class ExperienceStore {
           ftsSql += ` ORDER BY bm25(experiences_fts) ASC LIMIT @fetchLimit`
           rows = this.db.prepare(ftsSql).all(ftsParams) as RawExperienceRow[]
         } else {
-          let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
+          let sql = `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
           const params: Record<string, unknown> = { minScore, fetchLimit: coarseLimit }
           if (query.taskPattern) {
             sql += ` AND (task_pattern = @taskPattern OR task_pattern IS NULL)`
@@ -1016,13 +1016,13 @@ export class ExperienceStore {
       } catch {
         // FTS5 not available or query syntax error — fall back to SQL filter
         rows = this.db.prepare(`
-          SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0
+          SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE outcome_score >= @minScore AND merged = 0
           ORDER BY outcome_score DESC, created_at DESC LIMIT @fetchLimit
         `).all({ minScore, fetchLimit: coarseLimit }) as RawExperienceRow[]
       }
     } else {
       // Standard coarse filter via SQL
-      let sql = `SELECT * FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
+      let sql = `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE outcome_score >= @minScore AND merged = 0`
       const params: Record<string, unknown> = { minScore }
 
       if (query.taskPattern) {
@@ -1121,7 +1121,7 @@ export class ExperienceStore {
    */
   getById(id: string): ExperienceRecord | null {
     const row = this.db.prepare(
-      'SELECT * FROM experiences WHERE id = ?',
+      `SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE id = ?`,
     ).get(id) as RawExperienceRow | undefined
 
     return row ? this.rowToRecord(row) : null
@@ -1589,7 +1589,7 @@ export class ExperienceStore {
     if (unmergedCount < threshold) return []
 
     const rows = this.db.prepare(`
-      SELECT * FROM experiences
+      SELECT ${EXPERIENCES_COLUMNS} FROM experiences
       WHERE lesson IS NOT NULL AND merged = 0
       ORDER BY difficulty DESC, created_at DESC
     `).all() as RawExperienceRow[]
@@ -1692,7 +1692,7 @@ export class ExperienceStore {
    */
   exportAll(): ExportedExperience[] {
     const rows = this.db.prepare(`
-      SELECT * FROM experiences ORDER BY created_at ASC
+      SELECT ${EXPERIENCES_COLUMNS} FROM experiences ORDER BY created_at ASC
     `).all() as RawExperienceRow[]
 
     return rows.map((r) => this.rowToRecord(r)).map((rec) => ({
@@ -1720,7 +1720,7 @@ export class ExperienceStore {
    */
   exportByTaskPattern(taskPattern: string): ExportedExperience[] {
     const rows = this.db.prepare(`
-      SELECT * FROM experiences WHERE task_pattern = ? ORDER BY created_at ASC
+      SELECT ${EXPERIENCES_COLUMNS} FROM experiences WHERE task_pattern = ? ORDER BY created_at ASC
     `).all(taskPattern) as RawExperienceRow[]
 
     return rows.map((r) => this.rowToRecord(r)).map((rec) => ({
@@ -1907,7 +1907,7 @@ export class ExperienceStore {
   queryFacts(subject?: string, searchText?: string): AtomicFact[] {
     if (subject) {
       const rows = this.db.prepare(`
-        SELECT * FROM atomic_facts WHERE subject = @subject AND evicted = 0
+        SELECT ${ATOMIC_FACTS_COLUMNS} FROM atomic_facts WHERE subject = @subject AND evicted = 0
         ORDER BY updated_at DESC, created_at DESC
       `).all({ subject }) as RawFactRow[]
       return rows.map((r) => this.rowToFact(r))
@@ -1922,7 +1922,7 @@ export class ExperienceStore {
           .join(' ')
         if (safeQuery) {
           const rows = this.db.prepare(`
-            SELECT f.* FROM atomic_facts f
+            SELECT ${ATOMIC_FACTS_COLUMNS.split(', ').map(c => 'f.' + c).join(', ')} FROM atomic_facts f
             JOIN atomic_facts_fts ffts ON f.rowid = ffts.rowid
             WHERE atomic_facts_fts MATCH @matchText AND f.evicted = 0
             ORDER BY bm25(atomic_facts_fts) ASC
@@ -1935,7 +1935,7 @@ export class ExperienceStore {
 
     // No filter — return all non-evicted facts
     const rows = this.db.prepare(`
-      SELECT * FROM atomic_facts WHERE evicted = 0
+      SELECT ${ATOMIC_FACTS_COLUMNS} FROM atomic_facts WHERE evicted = 0
       ORDER BY updated_at DESC, created_at DESC LIMIT 100
     `).all() as RawFactRow[]
     return rows.map((r) => this.rowToFact(r))
@@ -1958,7 +1958,7 @@ export class ExperienceStore {
     // This catches cross-spelling conflicts that a raw SQL GROUP BY on exact strings
     // would miss (e.g. "deploy" vs "deploy-command" vs "deploy_command").
     const allRows = this.db.prepare(`
-      SELECT * FROM atomic_facts WHERE evicted = 0
+      SELECT ${ATOMIC_FACTS_COLUMNS} FROM atomic_facts WHERE evicted = 0
     `).all() as RawFactRow[]
 
     const facts = allRows.map((r) => this.rowToFact(r))
@@ -2028,6 +2028,12 @@ export class ExperienceStore {
     } catch { /* FTS tables may not exist yet */ }
   }
 }
+
+// 显式列名（AGENTS 4.10：禁用 SELECT *）。列集合必须与上表 schema / type 保持同步。
+const EXPERIENCES_COLUMNS = 'id, session_id, turn_id, created_at, task_unit_id, goal_id, context_hash, content_hash, task_pattern, tools_used, workspace_digest, actions, outcome_score, user_feedback, lesson, difficulty, generation, last_injected_at, merged, tags, confidence, reuse_count, source, outcome_verdict, outcome_confidence, acceptance_criteria, transfer_confidence, semantic_key, memory_tier'
+const TASK_UNIT_COLUMNS = 'id, goal_id, workspace_digest, acceptance_criteria, verdict, verdict_source, outcome_confidence, started_at, closed_at'
+const CORRECTION_EVENT_COLUMNS = 'id, turn_id, session_id, type, seq, target_tool, target_seq_hash, user_text, intent, severity, created_at'
+const ATOMIC_FACTS_COLUMNS = 'id, subject, predicate, object, source, confidence, created_at, updated_at, evicted'
 
 interface RawExperienceRow {
   id: string
