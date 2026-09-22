@@ -81,7 +81,7 @@ export class ExperienceStore {
   private storeCountSinceGC = 0
   private options: Required<StoreOptions>
 
-  constructor(dbPath: string = ':memory:', options: StoreOptions = {}) {
+  constructor(dbPath: string = ':memory:', options: StoreOptions = {}, canWrite = true) {
     this.options = { ...DEFAULT_STORE_OPTIONS, ...options }
 
     const homeDir = process.env.HOME || homedir()
@@ -92,9 +92,56 @@ export class ExperienceStore {
       const dir = resolvedPath.replace(/\/[^/]+$/, '')
       try { mkdirSync(dir, { recursive: true }) } catch {}
     }
-    this.db = new Database(resolvedPath)
-    this.db.pragma('journal_mode = WAL')
-    this.initSchema()
+    if (canWrite) {
+      this.db = new Database(resolvedPath)
+      this.db.pragma('journal_mode = WAL')
+      this.initSchema()
+    } else {
+      // read-only scoring: keeps reads/injection intact but no-ops every mutating
+      // method so test-turn experience never leaks back into the shared library.
+      // Schema already exists in the copied warm db; pragma + initSchema are
+      // writes and are skipped on the read-only path.
+      this.db = new Database(resolvedPath, { readonly: true })
+      this.overlayReadOnlyWrites()
+    }
+  }
+
+  /** Replace every mutating method with a no-op stub (read-only scoring install). */
+  private overlayReadOnlyWrites(): void {
+    const stub: Record<string, () => unknown> = {
+      store: () => '',
+      updateLesson: () => {},
+      updateLessonText: () => {},
+      updateSemanticKey: () => {},
+      incrementReuse: () => {},
+      boostConfidence: () => {},
+      applyAttribution: () => {},
+      decayTransferConfidence: () => {},
+      recordAttributionEvent: () => {},
+      applyEffectSizeDelta: () => {},
+      promoteToStrategy: () => 0,
+      demoteFromStrategy: () => 0,
+      forgetStrategy: () => 0,
+      storeCorrectionEvents: () => {},
+      penalizeByContentHash: () => 0,
+      updateCorrectionIntent: () => {},
+      createTaskUnit: () => {},
+      closeTaskUnit: () => {},
+      updateExperienceFeedback: () => {},
+      updateTaskUnitAcceptanceCriteria: () => {},
+      promoteToOldGen: () => {},
+      markMerged: () => {},
+      deleteById: () => false,
+      mergeLessons: () => '',
+      importExperiences: () => ({ imported: 0, skipped: 0, invalid: 0 }),
+      upsertFact: () => '',
+      upsertToolSequenceFact: () => '',
+      evictFact: () => false,
+      clear: () => {},
+    }
+    for (const [name, fn] of Object.entries(stub)) {
+      ;(this as unknown as Record<string, unknown>)[name] = fn
+    }
   }
 
   /** Current store options (read-only). */

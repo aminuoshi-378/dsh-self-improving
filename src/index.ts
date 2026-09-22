@@ -55,6 +55,8 @@ export interface Config {
   metaCognitionEnabled: boolean
   behaviorAdapterEnabled: boolean
   minInjectionScore: number
+  // false: stop persisting experience but keep injecting (read-only scoring).
+  recordExperiences: boolean
   // Lesson injection budget (characters)
   maxInjectionChars: number
   // Meta-cognition reflection queue cap
@@ -86,6 +88,7 @@ export function rulesSchema() {
       metaCognitionEnabled: { type: 'boolean', default: true },
       behaviorAdapterEnabled: { type: 'boolean', default: true },
       minInjectionScore: { type: 'number', default: 0.3 },
+      recordExperiences: { type: 'boolean', default: true },
       maxInjectionChars: { type: 'number', default: 8000 },
       maxPendingReflections: { type: 'number', default: 100 },
       youngGenMax: { type: 'number', default: 200 },
@@ -110,6 +113,14 @@ export function rulesSchema() {
 // ---------------------------------------------------------------------------
 
 const PLUGIN_SOURCE: MessageSource = { kind: 'plugin', plugin: 'self-improving' }
+/** retail state-changing / decision tools. A turn making none of these has no
+ * decision signal to persist (direction 3) nor to inject (direction 2. */
+const DECISION_TOOLS = new Set<string>([
+  'cancel_pending_order', 'exchange_delivered_order_items',
+  'modify_pending_order_address', 'modify_pending_order_items',
+  'modify_pending_order_payment', 'modify_user_address',
+  'return_delivered_order_items', 'transfer_to_human_agents',
+])
 
 /**
  * 解析 Agent 的绝对工作区路径。
@@ -205,6 +216,7 @@ export function countUserMessagesInTurn(events: any[], turn: number): number {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  let closed = false
   const store = new ExperienceStore(config.dbPath, {
     youngGenMax: config.youngGenMax,
     oldGenMax: config.oldGenMax,
@@ -212,9 +224,9 @@ export function apply(ctx: Context, config: Config): void {
     experienceTtlDays: config.experienceTtlDays,
     forgetScoreThreshold: config.forgetScoreThreshold,
     forgetConfidenceThreshold: config.forgetConfidenceThreshold,
-  })
+  }, config.recordExperiences !== false)
 
-  log('plugin loaded', { dbPath: config.dbPath, metaCognition: config.metaCognitionEnabled, behaviorAdapter: config.behaviorAdapterEnabled })
+  log('plugin loaded', { dbPath: config.dbPath, metaCognition: config.metaCognitionEnabled, behaviorAdapter: config.behaviorAdapterEnabled, recordExperiences: config.recordExperiences })
 
   // Per-agent turn tracking: collect tool results during a turn
   // Key: agent.id only (accumulate all tools across steps within a turn)
@@ -382,6 +394,18 @@ export function apply(ctx: Context, config: Config): void {
     if (!entry || entry.tools.length === 0) {
       log(`turn-stopping: no tools tracked for agent ${agent.id}, skipping (P-B: no-tool turns not stored)`)
       void llmRescanMissed()
+      return
+    }
+
+    // Q3: Decision-turn filter (direction 3) — a turn that made NO state-changing
+    // action carries no decision signal worth persisting; skip it entirely.
+    if (!entry.tools.some((t) => DECISION_TOOLS.has(t.name))) {
+      log(`turn-stopping: no decision action (Q3: ${entry.tools.map((t) => t.name).join(',')}), skipping storage`)
+      void llmRescanMissed()
+      agentTools.delete(agent.id)
+      if (!entry.goalId) {
+        agentTaskUnits.delete(agent.id)
+      }
       return
     }
 
@@ -671,6 +695,7 @@ export function apply(ctx: Context, config: Config): void {
     // paraphrase robustness than the rule-based fallback). Fire-and-forget.
     if (taskMsgText && config.metaCognitionEnabled) {
       void (async () => {
+        if (closed) return
         try {
           let provider = agent.options?.provider
           let model = agent.options?.model
@@ -891,7 +916,7 @@ export function apply(ctx: Context, config: Config): void {
               }
               const llmModel = (provider && model) ? { provider, model } : undefined
               const criteria = await generateAcceptanceCriteria(ctx, msgText, llmModel)
-              if (criteria) {
+              if (criteria && !closed) {
                 taskUnitForCriteria.acceptanceCriteria = criteria
                 store.updateTaskUnitAcceptanceCriteria(taskUnitForCriteria.taskUnitId, criteria)
                 log(`acceptance criteria generated for task unit ${taskUnitForCriteria.taskUnitId}`)
@@ -930,6 +955,18 @@ export function apply(ctx: Context, config: Config): void {
             taskPattern: taskFilter,
             searchText,
           })
+        }
+
+        // Q2: Maturity gate (direction 2) — do not inject a pool that has no
+        // decision-informative record (no lesson, no state-changing tools). Without
+        // this, a library of bland high-scored query turns injects as noise.
+        const informativeCount = records.filter((r: any) =>
+          (r.lesson != null && String(r.lesson).length > 0) ||
+          (Array.isArray(r.toolsUsed) && r.toolsUsed.some((t: unknown) => DECISION_TOOLS.has(String(t)))),
+        ).length
+        if (informativeCount === 0 && records.length > 0) {
+          log(`injection maturity gate: ${records.length} candidates with no decision signal; suppressing experience injection`)
+          records = []
         }
 
         // Always call next() first (waterfall contract: never short-circuit)
@@ -1173,6 +1210,7 @@ export function apply(ctx: Context, config: Config): void {
   // plain function invoked from `agent/turn-stopping` (which carries the agent,
   // giving us the provider/model needed for LLM reflection).
   async function runMaintenance(agent: Agent): Promise<void> {
+    if (closed) return
     // v2 L0 backfill: sweep pending task units for late user feedback. Runs on
     // every maintenance so a rating on the final turn is still picked up.
     await applyL0FeedbackBackfill(agent).catch((err) => {
@@ -1419,6 +1457,7 @@ export function apply(ctx: Context, config: Config): void {
     },
   ): Promise<void> {
     try {
+      if (closed) return
       // Resolve provider/model (same fallback chain as runMaintenance).
       let provider = agent.options?.provider
       let model = agent.options?.model
@@ -1519,6 +1558,7 @@ export function apply(ctx: Context, config: Config): void {
    * backfills the experience's feedback, and re-runs bidirectional attribution.
    */
   async function applyL0FeedbackBackfill(agent: Agent): Promise<void> {
+    if (closed) return
     try {
       const feedbackService = ctx.get('messageFeedback')
       if (!feedbackService || typeof feedbackService.list !== 'function') return
@@ -1639,6 +1679,10 @@ export function apply(ctx: Context, config: Config): void {
   // --- Cleanup ---
   ctx.effect(() => () => {
     // K2: Clean up in-memory maps to prevent memory leak on long-running processes
+    // Set closed before store.close() so late fire-and-forget async maintenance
+    // (runMaintenance/closeTaskUnitWithVerdict/applyL0FeedbackBackfill) bails
+    // instead of writing to a closed database during teardown.
+    closed = true
     agentTools.clear()
     agentTaskUnits.clear()
     store.close()
