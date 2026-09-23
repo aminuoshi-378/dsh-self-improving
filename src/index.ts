@@ -55,6 +55,13 @@ export interface Config {
   metaCognitionEnabled: boolean
   behaviorAdapterEnabled: boolean
   minInjectionScore: number
+  // Domain-specific state-changing tools: a turn using one ALWAYS persists
+  // (strongest decision signal). Turns without one must clear the difficulty
+  // gate (P-B) instead of being dropped wholesale — a hardcoded tool list as
+  // a hard gate made the plugin inert in every non-configured domain.
+  // Optional: absent => DEFAULT_DECISION_TOOLS (schema array defaults are not
+  // reliably applied by every config loader, so the code owns the fallback).
+  decisionTools?: string[]
   // false: stop persisting experience but keep injecting (read-only scoring).
   recordExperiences: boolean
   // Lesson injection budget (characters)
@@ -88,6 +95,19 @@ export function rulesSchema() {
       metaCognitionEnabled: { type: 'boolean', default: true },
       behaviorAdapterEnabled: { type: 'boolean', default: true },
       minInjectionScore: { type: 'number', default: 0.3 },
+      decisionTools: {
+        type: 'array',
+        items: { type: 'string' },
+        // Default = tau-bench RETAIL decision tools for backward compatibility.
+        // Configure per environment (airline tools, coding tools, or [] to rely
+        // purely on the difficulty gate).
+        default: [
+          'cancel_pending_order', 'exchange_delivered_order_items',
+          'modify_pending_order_address', 'modify_pending_order_items',
+          'modify_pending_order_payment', 'modify_user_address',
+          'return_delivered_order_items', 'transfer_to_human_agents',
+        ],
+      },
       recordExperiences: { type: 'boolean', default: true },
       maxInjectionChars: { type: 'number', default: 8000 },
       maxPendingReflections: { type: 'number', default: 100 },
@@ -113,14 +133,15 @@ export function rulesSchema() {
 // ---------------------------------------------------------------------------
 
 const PLUGIN_SOURCE: MessageSource = { kind: 'plugin', plugin: 'self-improving' }
-/** retail state-changing / decision tools. A turn making none of these has no
- * decision signal to persist (direction 3) nor to inject (direction 2. */
-const DECISION_TOOLS = new Set<string>([
+/** Decision tools are CONFIG-DRIVEN (config.decisionTools, tau-bench retail by
+ * default). They are a storage/injection SIGNAL, never a domain lockout: see
+ * the Q3 block in apply(). */
+const DEFAULT_DECISION_TOOLS = [
   'cancel_pending_order', 'exchange_delivered_order_items',
   'modify_pending_order_address', 'modify_pending_order_items',
   'modify_pending_order_payment', 'modify_user_address',
   'return_delivered_order_items', 'transfer_to_human_agents',
-])
+]
 
 /**
  * 解析 Agent 的绝对工作区路径。
@@ -226,7 +247,8 @@ export function apply(ctx: Context, config: Config): void {
     forgetConfidenceThreshold: config.forgetConfidenceThreshold,
   }, config.recordExperiences !== false)
 
-  log('plugin loaded', { dbPath: config.dbPath, metaCognition: config.metaCognitionEnabled, behaviorAdapter: config.behaviorAdapterEnabled, recordExperiences: config.recordExperiences })
+  const decisionTools = new Set(config.decisionTools ?? DEFAULT_DECISION_TOOLS)
+  log('plugin loaded', { dbPath: config.dbPath, metaCognition: config.metaCognitionEnabled, behaviorAdapter: config.behaviorAdapterEnabled, recordExperiences: config.recordExperiences, decisionTools: decisionTools.size })
 
   // Per-agent turn tracking: collect tool results during a turn
   // Key: agent.id only (accumulate all tools across steps within a turn)
@@ -397,25 +419,20 @@ export function apply(ctx: Context, config: Config): void {
       return
     }
 
-    // Q3: Decision-turn filter (direction 3) — a turn that made NO state-changing
-    // action carries no decision signal worth persisting; skip it entirely.
-    if (!entry.tools.some((t) => DECISION_TOOLS.has(t.name))) {
-      log(`turn-stopping: no decision action (Q3: ${entry.tools.map((t) => t.name).join(',')}), skipping storage`)
-      void llmRescanMissed()
-      agentTools.delete(agent.id)
-      if (!entry.goalId) {
-        agentTaskUnits.delete(agent.id)
-      }
-      return
-    }
-
-    // P-B: Low-value filtering — skip pure Q&A turns (1-2 steps, all success, no failures)
-    // These are simple lookups or chitchat that don't produce reusable experience
+    // Q3 (revised): decision tools are a SIGNAL, not a domain gate.
+    // - A turn using a configured decision tool ALWAYS persists (direction 3).
+    // - A turn with NO decision tool must clear the difficulty gate (P-B):
+    //   trivial all-success turns (few steps, few tools) are still filtered —
+    //   "simple experiments are not stored" — but non-trivial work (failures
+    //   or a real step count) persists in ANY tool domain. The previous
+    //   unconditional skip silently disabled the whole plugin outside the
+    //   hardcoded tau-retail tool list (observed: 50/50 coding turns skipped).
+    const hasDecisionAction = entry.tools.some((t) => decisionTools.has(t.name))
     const stepCountForFilter = Math.max(entry.stepCount, 1)
-    const hasFailuresForFilter = entry.tools.some(t => !t.success)
+    const hasFailuresForFilter = entry.tools.some((t) => !t.success)
     const difficultyForFilter = computeDifficulty(stepCountForFilter, hasFailuresForFilter)
-    if (difficultyForFilter === 'low' && entry.tools.length <= LOW_VALUE_TOOL_MAX) {
-      log(`turn-stopping: low-value turn (P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
+    if (!hasDecisionAction && difficultyForFilter === 'low' && entry.tools.length <= LOW_VALUE_TOOL_MAX) {
+      log(`turn-stopping: low-value non-decision turn (Q3/P-B: ${entry.tools.length} tools, ${stepCountForFilter} steps, difficulty=low), skipping storage`)
       void llmRescanMissed()
       agentTools.delete(agent.id)
       // M4: Also clean up task unit for no-goal turns to prevent map leak
@@ -423,6 +440,9 @@ export function apply(ctx: Context, config: Config): void {
         agentTaskUnits.delete(agent.id)
       }
       return
+    }
+    if (!hasDecisionAction) {
+      log(`turn-stopping: non-decision turn passed difficulty gate (Q3: steps=${stepCountForFilter}, difficulty=${difficultyForFilter}), storing`)
     }
 
     // Score the turn
@@ -962,7 +982,7 @@ export function apply(ctx: Context, config: Config): void {
         // this, a library of bland high-scored query turns injects as noise.
         const informativeCount = records.filter((r: any) =>
           (r.lesson != null && String(r.lesson).length > 0) ||
-          (Array.isArray(r.toolsUsed) && r.toolsUsed.some((t: unknown) => DECISION_TOOLS.has(String(t)))),
+          (Array.isArray(r.toolsUsed) && r.toolsUsed.some((t: unknown) => decisionTools.has(String(t)))),
         ).length
         if (informativeCount === 0 && records.length > 0) {
           log(`injection maturity gate: ${records.length} candidates with no decision signal; suppressing experience injection`)
