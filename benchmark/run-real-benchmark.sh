@@ -9,9 +9,11 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/Users/xh/project/dsh-self-improving"
+# Derive paths from this script's location: expects the dsh repo to sit next to
+# the plugin repo (sibling checkout layout). Override via env if different.
+PROJECT_DIR="${PLUGIN_PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 TASKS_DIR="$PROJECT_DIR/benchmark-tasks"
-DSH_DIR="/Users/xh/project/deepseek-harness"
+DSH_DIR="${DSH_PROJECT_DIR:-$(dirname "$PROJECT_DIR")/deepseek-harness}"
 RESULTS_DIR="$PROJECT_DIR/benchmark-results"
 DATE_TAG=$(date +%Y%m%d-%H%M%S)
 

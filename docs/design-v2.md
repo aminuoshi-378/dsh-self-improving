@@ -245,7 +245,7 @@ v1 把纠正信号当"黄金信号"，但它漏检率高、依赖脆弱契约。
 
 ## 11. dsh 源码兼容性（2026-09-04 查证）
 
-本地 dsh 源码位于 `/Users/xh/project/deepseek-harness`（与 `dsh-self-improving` 同级目录）。已查证的关键契约：
+本地 dsh 源码与 `dsh-self-improving` 同级目录（`<DSH_REPO>`，如 `../deepseek-harness`）。已查证的关键契约：
 
 | 契约 | 结论 | 对 v2 的影响 |
 |------|------|-------------|
