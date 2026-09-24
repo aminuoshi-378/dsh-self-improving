@@ -190,12 +190,121 @@ export interface ExperienceQuery {
 
 /**
  * The result of a reflection — produced by Layer 4, stored in the lesson field.
+ *
+ * `applicability` (v2 mu8-condition): the conditions under which the lesson was
+ * learned — most importantly the task's VERIFICATION FEEDBACK structure. A
+ * step-by-step "verify often" tactic is sound under readable failure output
+ * (diffs / expected-actual details) and degenerates into zero-information
+ * churn under opaque pass/fail-only feedback. Unconditional lessons transfer
+ * that failure mode onto new tasks (observed: mu8, 22+ no-gain steps to
+ * timeout). Optional for backward compatibility with legacy lesson JSON;
+ * every new generation path fills it.
  */
 export interface Reflection {
   whatWorked: string
   whatFailed: string
   whatToTryDifferently: string
   reusableLesson: string
+  applicability?: string
+}
+
+// ---------------------------------------------------------------------------
+// Lesson applicability — feedback-structure observation (v2 mu8-condition)
+// ---------------------------------------------------------------------------
+
+/**
+ * One observed verification-style tool call (raw sample, pre-aggregation).
+ * Collected in `tools/result`; aggregated into a FeedbackProfile at turn close.
+ */
+export interface VerificationSample {
+  /** Tool-call arguments summary — for bash-family tools, the command text (truncated). */
+  command: string
+  /** Output text sample (truncated). */
+  output: string
+  /** Whether the tool call itself succeeded (!isError). */
+  ok: boolean
+}
+
+/**
+ * The turn's verification-feedback structure — the observation base that
+ * makes lesson applicability evidence-based instead of invented.
+ */
+export interface FeedbackProfile {
+  /** Number of verification-style tool calls observed this turn. */
+  verificationRuns: number
+  /**
+   * Feedback channel classification:
+   * - detailed: at least one verification output shows readable failure detail
+   *   (diff markers / expected-actual / substantial multi-line output)
+   * - opaque:   all verification outputs are short pass/fail-style signals
+   *   (black-box grading: PASS/FAIL/exit-code/hash — one bit per run)
+   * - none:     no verification-style output observed
+   */
+  feedbackStyle: 'detailed' | 'opaque' | 'none'
+  /** Truncated verification output samples, capped at MAX_FEEDBACK_SAMPLES. */
+  samples: string[]
+}
+
+/** Cap on samples kept per turn (raw collection) — enough to classify, bounded memory. */
+export const MAX_RAW_FEEDBACK_SAMPLES = 8
+/** Cap on samples rendered into the lesson-generation prompt. */
+export const MAX_FEEDBACK_SAMPLES = 3
+/** A verification output at or below this length with no rich markers is "opaque". */
+export const OPAQUE_OUTPUT_MAX_CHARS = 40
+
+const VERIFY_CMD_RE = /\b(test|spec)\.(mjs|cjs|js|ts)\b|\b(npm|yarn|pnpm)\s+(run\s+)?test\b|\bnode\b[^\n|;&]{0,80}\btest\b|\bpytest\b|\bjest\b|\bvitest\b/i
+const VERIFY_OUTPUT_RE = /\b(PASS|FAIL|passed|failed|failing|Tests?:|✓|✗|assertion)\b/i
+const RICH_FEEDBACK_RE = /expected|actual|assert|diff|mismatch|\bat line\b|\bstack\b|failing tests|source file/i
+
+/**
+ * Is this tool call a verification-style run (running tests / checks)?
+ * Signal = command shape OR output shape; either alone is enough (a
+ * `node test.cjs` whose output got swallowed still counts via command).
+ */
+export function isVerificationCall(command: string | null, outputText: string): boolean {
+  if (command && VERIFY_CMD_RE.test(command)) return true
+  return VERIFY_OUTPUT_RE.test(outputText)
+}
+
+/**
+ * Does a verification output carry readable failure detail (rich channel)?
+ * Long output OR explicit difference markers — as opposed to a bare
+ * PASS/FAIL verdict line (opaque channel, one bit per run).
+ */
+export function isRichFeedback(outputText: string): boolean {
+  if (outputText.length > OPAQUE_OUTPUT_MAX_CHARS) return true
+  return RICH_FEEDBACK_RE.test(outputText)
+}
+
+/**
+ * Aggregate raw verification samples into the turn's FeedbackProfile.
+ * Classification rule: any rich output → 'detailed'; otherwise verification
+ * outputs exist but all opaque → 'opaque'; none observed → 'none'.
+ */
+export function buildFeedbackProfile(samples: VerificationSample[]): FeedbackProfile {
+  if (samples.length === 0) {
+    return { verificationRuns: 0, feedbackStyle: 'none', samples: [] }
+  }
+  const hasRich = samples.some((s) => isRichFeedback(s.output))
+  const rendered = samples
+    .slice(-MAX_FEEDBACK_SAMPLES)
+    .map((s) => `cmd: ${s.command}\n  out: ${s.output}`)
+  return {
+    verificationRuns: samples.length,
+    feedbackStyle: hasRich ? 'detailed' : 'opaque',
+    samples: rendered,
+  }
+}
+
+/**
+ * Render a feedback profile as one line for the lesson-generation prompt.
+ */
+export function describeFeedbackProfile(profile: FeedbackProfile | undefined): string {
+  if (!profile || profile.feedbackStyle === 'none') return 'no verification output observed'
+  const style = profile.feedbackStyle === 'detailed'
+    ? 'readable failure detail (diffs / expected-actual / multi-line output)'
+    : 'opaque pass/fail-only signals (one bit per run)'
+  return `${profile.verificationRuns} verification run(s), feedback: ${style}`
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +519,24 @@ export function extractLessonText(lesson: string | null): string | null {
     // Not JSON — return raw text
   }
   return lesson
+}
+
+/**
+ * Extract the applicability conditions from a stored lesson JSON.
+ * Returns null for legacy lessons without the field (injection then renders
+ * the lesson unconditionally — same behavior as before this field existed).
+ */
+export function extractApplicability(lesson: string | null): string | null {
+  if (!lesson) return null
+  try {
+    const parsed = JSON.parse(lesson)
+    if (parsed && typeof parsed.applicability === 'string' && parsed.applicability.length > 0) {
+      return parsed.applicability
+    }
+  } catch {
+    // Not JSON — no applicability on legacy plain-text lessons
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------

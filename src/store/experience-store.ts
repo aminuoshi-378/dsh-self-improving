@@ -1672,6 +1672,7 @@ export class ExperienceStore {
       whatFailed: string
       whatToTryDifferently: string
       reusableLesson: string
+      applicability?: string // mu8-condition: preserved through lesson merges
     },
     difficulty: 'low' | 'medium' | 'high',
     toolsUsed: string[],

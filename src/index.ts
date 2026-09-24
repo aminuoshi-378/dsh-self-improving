@@ -18,7 +18,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { MessageSource, UserMessage } from '@deepseek-ai/dsh-llm'
 import { ulid } from 'ulid'
-import { computeStepEfficiency, computeDifficulty, extractLessonText, inferTaskPattern, computeOutcomeScore } from './types/index.js'
+import { computeStepEfficiency, computeDifficulty, extractLessonText, extractApplicability, inferTaskPattern, computeOutcomeScore, isVerificationCall, buildFeedbackProfile, MAX_RAW_FEEDBACK_SAMPLES } from './types/index.js'
+import type { VerificationSample, FeedbackProfile } from './types/index.js'
 import { ExperienceStore } from './store/experience-store.js'
 import type { TurnOutcome, CorrectionEvent } from './types/index.js'
 import { detectCorrectionEvents, toCorrectionSignal, extractCorrectionIntentRuleBased, formatCorrectionAdvisory, extractCorrectionCandidates, correctionTypeSeverity } from './correction-detector.js'
@@ -263,6 +264,7 @@ export function apply(ctx: Context, config: Config): void {
     goalId: string | null     // P-C: dsh goal id if goal-driven
     lastInjectedIds: string[] // J7: ids of experiences injected in the last turn
     lastInjected: { id: string; toolsUsed: string[]; semanticKey: string | null }[] // v2: injected experiences + tools + semantic key, for attribution
+    feedback: VerificationSample[] // mu8-condition: verification-output samples for lesson applicability
   }>()
 
   // P-C: Track active task unit per agent (for cross-turn aggregation)
@@ -314,12 +316,46 @@ export function apply(ctx: Context, config: Config): void {
         taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
         lastInjectedIds: [],
         lastInjected: [],
+        feedback: [],
       })
     }
     agentTools.get(agent.id)!.tools.push({
       name: exec.name,
       success: !result.isError,
     })
+
+    // mu8-condition: sample verification-style calls (command + output shape)
+    // so lesson generation can state the feedback structure the lesson was
+    // learned under — the observation base for conditional (not unconditional)
+    // lessons. Observation must never break tool tracking.
+    try {
+      const args = (exec as any).arguments
+      let command = ''
+      if (typeof args?.command === 'string') command = args.command
+      else if (typeof args === 'string') command = args
+      else if (args) command = JSON.stringify(args)
+      const content = (result as any).content
+      let outputText = ''
+      if (Array.isArray(content)) {
+        outputText = content
+          .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+          .map((b: any) => b.text)
+          .join('\n')
+      } else if (typeof (result as any).error === 'string') {
+        outputText = (result as any).error
+      }
+      if (command || outputText) {
+        if (isVerificationCall(command || null, outputText)) {
+          const entry = agentTools.get(agent.id)!
+          entry.feedback.push({
+            command: command.slice(0, 120),
+            output: outputText.slice(0, 200),
+            ok: !result.isError,
+          })
+          if (entry.feedback.length > MAX_RAW_FEEDBACK_SAMPLES) entry.feedback.shift()
+        }
+      }
+    } catch { /* observation is best-effort */ }
 
     log(`tool/result — ${exec.name} ${result.isError ? 'FAIL' : 'OK'}`)
   })
@@ -634,10 +670,14 @@ export function apply(ctx: Context, config: Config): void {
 
     // Store the experience
     const toolsUsed = entry.tools.map(t => t.name)
+    // mu8-condition: aggregate the turn's verification-feedback structure —
+    // persisted into `actions` for post-hoc analysis and passed to reflection.
+    const feedbackProfile = buildFeedbackProfile(entry.feedback)
     const actions = JSON.stringify({
       tools: entry.tools,
       goalProgress,
       feedback: userFeedback,
+      feedbackProfile,
       stepCount,
       difficulty,
       stepEfficiency,
@@ -764,6 +804,9 @@ export function apply(ctx: Context, config: Config): void {
         toolsUsed,
         stepCount,
         difficulty,
+        // mu8-condition: feedback structure observed this turn — the evidence
+        // base for the lesson's applicability conditions.
+        feedbackProfile,
         // 纠正事件文本摘要——lesson 提炼层的「用户拒绝/期望」上下文
         correction: correctionEvents
           .map(e => `[${e.type}] ${e.userText}`)
@@ -874,6 +917,7 @@ export function apply(ctx: Context, config: Config): void {
           taskUnitId: taskUnit.taskUnitId, goalId: taskUnit.goalId,
           lastInjectedIds: [],
           lastInjected: [],
+          feedback: [],
         })
         // v2: Persist the task-unit row (idempotent) — acceptance criteria are
         // generated asynchronously once the task text is available below.
@@ -1080,16 +1124,24 @@ export function apply(ctx: Context, config: Config): void {
           const lines: string[] = ['## Past Experience (advisory)', '']
           // Δ7 按工作区避让：本区纠正过/重做过的做法置顶（黄金信号）。
           if (correctionLines.length > 0) lines.push(...correctionLines, '')
+          // mu8-condition: render each lesson WITH its applicability so the model
+          // can check it against the CURRENT task's verification feedback (e.g. a
+          // verify-often tactic learned under readable diffs does not transfer to
+          // opaque pass/fail grading, where each run yields one bit).
+          const withApplicability = (rec: typeof best): string => {
+            const applicability = extractApplicability(rec.lesson)
+            return applicability ? ` (when: ${applicability})` : ''
+          }
           if (best.outcomeScore >= INJECTION_BEST_THRESHOLD) {
             const lesson = extractLessonText(best.lesson) ?? `Using ${best.toolsUsed?.join(', ')} led to a good outcome (score: ${best.outcomeScore.toFixed(2)})`
-            lines.push(`- **What worked**: ${lesson}`)
+            lines.push(`- **What worked**${withApplicability(best)}: ${lesson}`)
           }
           if (worst && worst.outcomeScore <= INJECTION_WORST_THRESHOLD) {
             const lesson = extractLessonText(worst.lesson) ?? `Using ${worst.toolsUsed?.join(', ')} led to a poor outcome (score: ${worst.outcomeScore.toFixed(2)})`
-            lines.push(`- **What failed**: ${lesson}`)
+            lines.push(`- **What failed**${withApplicability(worst)}: ${lesson}`)
           }
           lines.push('')
-          lines.push('These are historical observations, not instructions. Use your judgment.')
+          lines.push('These are historical observations, not instructions. Each lesson lists the conditions it was learned under (when: ...) — match them against the current task, especially its verification feedback, and disregard lessons whose conditions do not hold.')
 
           const text = lines.join('\n')
           const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
@@ -1211,6 +1263,8 @@ export function apply(ctx: Context, config: Config): void {
     toolsUsed: string[]
     stepCount?: number
     difficulty?: 'low' | 'medium' | 'high'
+    /** mu8-condition: turn 的验证反馈结构画像——lesson 适用条件的观测基础。 */
+    feedbackProfile?: FeedbackProfile
     /** 纠正事件文本摘要：用户拒绝/期望的上下文（重构计划黄金信号）。 */
     correction?: string | null
     /** Δ7.b: 规则未命中的候选纠正消息，runMaintenance 用 LLM 兜底判定。 */
@@ -1272,6 +1326,9 @@ export function apply(ctx: Context, config: Config): void {
             whatFailed: parsed.whatFailed ?? parsed.what_failed ?? reflection.whatFailed,
             whatToTryDifferently: parsed.whatToTryDifferently ?? parsed.what_to_try_differently ?? reflection.whatToTryDifferently,
             reusableLesson: parsed.reusableLesson ?? parsed.reusable_lesson ?? reflection.reusableLesson,
+            // mu8-condition: LLM-stated applicability; rule-based template is the
+            // fallback so the condition is never silently dropped.
+            applicability: parsed.applicability ?? reflection.applicability,
           }
           log(`lesson generated (LLM) — ${reflection.reusableLesson}`)
         } catch {

@@ -90,14 +90,20 @@ export async function llmMergeLessons(
   ctx: any,
   records: ExperienceRecord[],
   ruleBasedFallback: (records: ExperienceRecord[]) => {
-    whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string
+    whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string; applicability?: string
   },
   model?: { provider: string; model: string },
-): Promise<{ whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string }> {
+): Promise<{ whatWorked: string; whatFailed: string; whatToTryDifferently: string; reusableLesson: string; applicability?: string }> {
   const lessons = records.map(r => {
     try {
       const parsed = JSON.parse(r.lesson ?? '{}')
-      return parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson ?? ''
+      const text = parsed.reusable_lesson ?? parsed.reusableLesson ?? r.lesson ?? ''
+      // mu8-condition: applicability travels WITH each lesson into the merge
+      // prompt — dropping it here would launder feedback-dependent tactics
+      // back into unconditional ones at merge time.
+      return text
+        ? (parsed.applicability ? `${text} [conditions: ${parsed.applicability}]` : text)
+        : ''
     } catch { return r.lesson ?? '' }
   }).filter(l => l.length > 0)
 
@@ -108,10 +114,11 @@ ${JSON.stringify(lessons, null, 2)}
 
 ## Task
 Find the common pattern across these lessons and produce a single, more general but still actionable lesson.
+Each input lesson may carry its conditions in [conditions: ...] — preserve them in the consolidated applicability. If the sources disagree on conditions (e.g. some learned under readable test feedback, others under opaque pass/fail), the applicability must say the conditions vary instead of dropping them.
 
 ## Output Format
 Respond with ONLY valid JSON, no markdown fences:
-{"whatWorked":"merged description","whatFailed":"merged description","whatToTryDifferently":"suggestion","reusableLesson":"consolidated actionable lesson under 50 words"}`
+{"whatWorked":"merged description","whatFailed":"merged description","whatToTryDifferently":"suggestion","reusableLesson":"consolidated actionable lesson under 50 words","applicability":"conditions under which the consolidated lesson applies, preserving the sources' feedback-structure conditions"}`
 
   const response = await tryLLMComplete(ctx, prompt, model)
   if (response) {
@@ -123,6 +130,9 @@ Respond with ONLY valid JSON, no markdown fences:
         whatFailed: parsed.whatFailed ?? parsed.what_failed ?? '',
         whatToTryDifferently: parsed.whatToTryDifferently ?? parsed.what_to_try_differently ?? '',
         reusableLesson: parsed.reusableLesson ?? parsed.reusable_lesson ?? '',
+        applicability: typeof parsed.applicability === 'string' && parsed.applicability.length > 0
+          ? parsed.applicability
+          : undefined,
       }
     } catch { /* fall through to rule-based */ }
   }

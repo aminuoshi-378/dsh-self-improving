@@ -5,7 +5,8 @@
  * P2: Rule-based fallback reflection and lesson merging.
  */
 
-import type { ExperienceRecord } from './types/index.js'
+import type { ExperienceRecord, FeedbackProfile, Reflection } from './types/index.js'
+import { describeFeedbackProfile, extractApplicability } from './types/index.js'
 import {
   REFLECTION_SUCCESS_THRESHOLD,
   REFLECTION_FAILURE_THRESHOLD,
@@ -58,8 +59,13 @@ export function buildLessonPrompt(entry: {
   stepCount?: number
   difficulty?: 'low' | 'medium' | 'high'
   correction?: string | null
+  feedbackProfile?: FeedbackProfile
 }): string {
   const { toolNames, failedTools } = extractToolInfo(entry.actions, entry.toolsUsed)
+  const fp = entry.feedbackProfile
+  const sampleBlock = fp && fp.samples.length > 0
+    ? `\n- Verification output samples:\n${fp.samples.map((s) => `  - ${s}`).join('\n')}`
+    : ''
 
   return `You are a reflection engine. Analyze this agent turn and produce a structured lesson.
 
@@ -70,15 +76,18 @@ export function buildLessonPrompt(entry: {
 - Difficulty: ${entry.difficulty ?? 'medium'}
 - Outcome score: ${entry.outcomeScore.toFixed(2)}
 - User feedback: ${entry.userFeedback}
+- Feedback structure: ${describeFeedbackProfile(fp)}${sampleBlock}
 ${entry.correction ? `- User corrections (golden signal): ${entry.correction}` : ''}
 
 ## Task
 Produce a concise, actionable lesson from this turn. Focus on what specifically worked or failed, not generic advice.
 If the user corrected or rejected an approach, the lesson MUST capture what the user does not accept and the expected alternative — this is the single most important signal.
 
+State the lesson's applicability honestly. Tactics that rely on iterating against test feedback are only sound when failures produce READABLE detail (diffs, expected/actual, error locations) — each run then carries real information. Under OPAQUE pass/fail-only feedback each verification yields at most one bit, so small-step verify-often loops churn without progress; such tasks need the full implementation reasoned out before verifying. Never present a feedback-dependent tactic as universally applicable.
+
 ## Output Format
 Respond with ONLY valid JSON, no markdown fences:
-{"whatWorked":"specific description","whatFailed":"specific description","whatToTryDifferently":"suggestion","reusableLesson":"concise actionable lesson under 50 words"}`
+{"whatWorked":"specific description","whatFailed":"specific description","whatToTryDifferently":"suggestion","reusableLesson":"concise actionable lesson under 50 words","applicability":"conditions under which this lesson applies — include the verification feedback structure it was learned under (readable detail vs opaque pass/fail vs user preference)"}`
 }
 
 /** P2: Rule-based structured reflection (fallback when no LLM available). */
@@ -90,12 +99,8 @@ export function generateStructuredReflection(entry: {
   stepCount?: number
   difficulty?: 'low' | 'medium' | 'high'
   correction?: string | null
-}): {
-  whatWorked: string
-  whatFailed: string
-  whatToTryDifferently: string
-  reusableLesson: string
-} {
+  feedbackProfile?: FeedbackProfile
+}): Reflection {
   const { toolNames, failedTools, guardCount } = extractToolInfo(entry.actions, entry.toolsUsed)
   const stepInfo = entry.stepCount ? ` in ${entry.stepCount} steps` : ''
   const diffInfo = entry.difficulty ? ` (difficulty: ${entry.difficulty})` : ''
@@ -103,6 +108,16 @@ export function generateStructuredReflection(entry: {
   // 纠正上下文（黄金信号）：一旦用户纠正/回退/重做，优先沉淀「用户不接受的方案+期望」。
   const correctionCtx = entry.correction?.trim()
   const hasCorrection = !!correctionCtx
+
+  // mu8-condition: 按观测到的反馈结构生成适用条件——反馈依赖型策略必须
+  // 标注其学习环境，否则会在黑盒协议下被误用（opaque 反馈下小步验证零信息增益）。
+  const applicability = hasCorrection
+    ? 'User preference — applies whenever working with this user/workspace, regardless of task feedback structure'
+    : entry.feedbackProfile?.feedbackStyle === 'opaque'
+      ? 'Learned under opaque pass/fail-only verification — each run yields at most one bit; do not assume small-step trial-and-error transfers to tasks with readable failure output'
+      : entry.feedbackProfile?.feedbackStyle === 'detailed'
+        ? 'Applies when verification failures produce readable detail (diffs / expected-actual / error locations); the iterate-verify loop depends on that information'
+        : 'No verification feedback observed this turn — treat as a general workflow observation and check it against the current task before applying'
 
   let whatWorked: string
   let whatFailed: string
@@ -137,16 +152,11 @@ export function generateStructuredReflection(entry: {
     reusableLesson = `For ${entry.difficulty ?? 'medium'} tasks, [${toolNames.join(' → ')}] gives mixed results${stepInfo} — consider alternatives for failing steps`
   }
 
-  return { whatWorked, whatFailed, whatToTryDifferently, reusableLesson }
+  return { whatWorked, whatFailed, whatToTryDifferently, reusableLesson, applicability }
 }
 
 /** P2: Rule-based lesson merging (fallback when no LLM available). */
-export function mergeLessonsRuleBased(records: ExperienceRecord[]): {
-  whatWorked: string
-  whatFailed: string
-  whatToTryDifferently: string
-  reusableLesson: string
-} {
+export function mergeLessonsRuleBased(records: ExperienceRecord[]): Reflection {
   const lessons = records.map(r => {
     try {
       const parsed = JSON.parse(r.lesson ?? '{}')
@@ -156,10 +166,25 @@ export function mergeLessonsRuleBased(records: ExperienceRecord[]): {
     }
   }).filter(l => l.length > 0)
 
+  // mu8-condition: merge must not silently drop applicability. Uniform
+  // conditions carry over verbatim; conflicting conditions degrade to an
+  // explicit "conditions vary" statement rather than an unconditional lesson.
+  const conditions = new Set(
+    records.map(r => extractApplicability(r.lesson))
+      .filter((a): a is string => a !== null),
+  )
+  let applicability: string | undefined
+  if (conditions.size === 1) {
+    applicability = [...conditions][0]
+  } else if (conditions.size > 1) {
+    applicability = 'Merged from tasks with differing feedback conditions — check each source lesson\'s conditions before applying'
+  }
+
   return {
     whatWorked: `Consolidated from ${records.length} experiences`,
     whatFailed: 'See individual records for specific failures',
     whatToTryDifferently: 'Apply the consolidated lesson',
     reusableLesson: lessons.join('; ') || 'No specific lesson extracted',
+    applicability,
   }
 }
