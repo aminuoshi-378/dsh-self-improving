@@ -1,0 +1,25 @@
+const { newestFile } = require('./bug.cjs')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+async function main() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'f10-'))
+  const dir = path.join(base, 'd')
+  fs.mkdirSync(dir)
+  const old = new Date(Date.now() - 200_000)
+  fs.writeFileSync(path.join(dir, 'old-a.txt'), 'a')
+  fs.writeFileSync(path.join(dir, 'old-b.txt'), 'b')
+  fs.utimesSync(path.join(dir, 'old-a.txt'), old, old)
+  fs.utimesSync(path.join(dir, 'old-b.txt'), old, old)
+  fs.mkdirSync(path.join(dir, 'subdir'))
+  fs.writeFileSync(path.join(dir, 'fresh.txt'), 'c')
+
+  const name = await newestFile(dir)
+  if (name !== 'fresh.txt') throw new Error(`the newest file must win, got ${JSON.stringify(name)}`)
+
+  const onlyDirs = fs.mkdtempSync(path.join(os.tmpdir(), 'f10-'))
+  fs.mkdirSync(path.join(onlyDirs, 'nested'))
+  if (await newestFile(onlyDirs) !== null) throw new Error('a directory with no files resolves null')
+  console.log('PASS: newestFile finds the most recently modified file')
+}
+main().then(undefined, (error) => { console.error('FAIL:', error && error.message); process.exit(1) })

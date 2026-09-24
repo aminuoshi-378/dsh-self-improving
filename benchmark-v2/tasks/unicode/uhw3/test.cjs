@@ -1,0 +1,25 @@
+const { displayWidth } = require('./bug.cjs')
+function eq(actual, expected, msg) {
+  if (actual !== expected) {
+    console.error(`FAIL ${msg}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`)
+    process.exit(1)
+  }
+}
+eq(displayWidth('abc'), 3, 'ascii')
+eq(displayWidth('\uD55C'), 2, 'hangul syllable is wide')
+eq(displayWidth('a\uD55Cb'), 4, 'mixed width')
+eq(displayWidth('\u{1F600}'), 2, 'emoji is wide')
+eq(displayWidth('e\u0301'), 1, 'combining mark counts 0')
+eq(displayWidth('a\u200C\u200Db'), 2, 'ZWSP+ZWNJ+ZWJ all count 0')
+eq(displayWidth('\uFE0F'), 0, 'variation selector counts 0')
+eq(displayWidth('\u115F'), 2, 'U+115F is the wide range edge')
+eq(displayWidth('\u1160'), 1, 'U+1160 is outside the wide range')
+eq(displayWidth('\uFF60'), 2, 'U+FF60 is inside FF00-FF60')
+eq(displayWidth('\uFF61'), 1, 'U+FF61 is outside')
+eq(displayWidth('\u{1F300}'), 2, 'U+1F300 wide-range start')
+eq(displayWidth('\u{1F650}'), 1, 'U+1F650 outside wide emoji range')
+eq(displayWidth('\u036F'), 0, 'combining range end')
+eq(displayWidth('\u0300'), 0, 'combining range start')
+eq(displayWidth('\u02FF'), 1, 'below combining range')
+eq(displayWidth(''), 0, 'empty')
+console.log('PASS: display width by code point and rule table')

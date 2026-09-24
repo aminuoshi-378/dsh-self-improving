@@ -1,0 +1,34 @@
+{
+  "pluginProject": "/absolute/path/to/dsh-self-improving",
+  "dshRepo": "/absolute/path/to/deepseek-harness",
+  "playwrightModuleDir": "/absolute/path/to/a/playwright-installation",
+  "dshHome": "/absolute/path/to/user-home/.dsh",
+  "profiles": {
+    "baseline": "bench-v2-web-baseline",
+    "enabled": "bench-v2-web-enabled",
+    "enabledRo": "bench-v2-web-enabled-ro"
+  },
+  "ports": {
+    "baseline": 3081,
+    "enabled": 3082,
+    "enabledRo": 3083
+  },
+  "model": {
+    "provider": "your-provider",
+    "id": "your-model-id",
+    "uiLabelHint": "Your Model Label"
+  },
+  "persona": "You are a coding agent. Your working directory is the current directory. Read the code first, make the minimal correct change, and run the provided test command to verify.",
+  "dbPath": "/absolute/path/to/dsh-self-improving/benchmark-v2/state/enabled.db",
+  "run": {
+    "taskTimeoutMs": 180000,
+    "abortWaitMs": 60000,
+    "uiPollMs": 2000,
+    "headless": false,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "arenaPath": "/absolute/path/to/dsh-self-improving/benchmark-v2/state/arena"
+}

@@ -1,0 +1,27 @@
+const { appendDedup } = require('./bug.cjs')
+const { mkdtempSync, readFileSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const path = require('node:path')
+function eq(actual, expected, msg) {
+  if (actual !== expected) {
+    console.error(`FAIL ${msg}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`)
+    process.exit(1)
+  }
+}
+const dir = mkdtempSync(path.join(tmpdir(), 'dedup-'))
+const f = path.join(dir, 'log.txt')
+eq(appendDedup(f, 'a'), true, 'first append creates file')
+eq(appendDedup(f, 'a'), false, 'immediate dup skipped')
+eq(appendDedup(f, 'b'), true, 'different line appends')
+eq(appendDedup(f, 'a'), false, 'dup inside window')
+eq(appendDedup(f, 'c'), true, 'c appends')
+eq(appendDedup(f, 'd'), true, 'd appends')
+eq(appendDedup(f, 'a'), true, 'a fell out of the 3-line window [b,c,d]')
+eq(appendDedup(f, 'd'), false, 'd is the tail, skipped')
+eq(readFileSync(f, 'utf8'), 'a\nb\nc\nd\na', 'file content exact')
+const f2 = path.join(dir, 'log2.txt')
+eq(appendDedup(f2, 'x'), true, 'second file first append')
+eq(appendDedup(f2, 'x', 2), false, 'window argument respected')
+eq(appendDedup(f2, 'y', 1), true, 'window 1 allows y')
+eq(appendDedup(f2, 'x', 1), true, 'window 1: only y blocks, x passes')
+console.log('PASS: trailing-window dedup')

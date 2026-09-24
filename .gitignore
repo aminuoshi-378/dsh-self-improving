@@ -10,3 +10,9 @@ gui/node_modules
 .DS_Store
 *.log
 .env
+benchmark-v2/runs/
+benchmark-v2/state/
+benchmark-v2/node_modules/
+
+# local bench config contains private provider/model endpoints — keep the example in git instead
+benchmark-v2/config.json

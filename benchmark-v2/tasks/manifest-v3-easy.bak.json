@@ -1,0 +1,1009 @@
+{
+  "version": 3,
+  "train": [
+    "uw1",
+    "dw1",
+    "jw1",
+    "aw1",
+    "fw1",
+    "uw2",
+    "dw2",
+    "jw2",
+    "aw2",
+    "fw2",
+    "uw3",
+    "dw3",
+    "jw3",
+    "aw3",
+    "fw3",
+    "uw4",
+    "dw4",
+    "jw4",
+    "aw4",
+    "fw4",
+    "uw5",
+    "dw5",
+    "jw5",
+    "aw5",
+    "fw5",
+    "uw6",
+    "dw6",
+    "jw6",
+    "aw6",
+    "fw6",
+    "uw7",
+    "dw7",
+    "jw7",
+    "aw7",
+    "fw7",
+    "uw8",
+    "dw8",
+    "jw8",
+    "aw8",
+    "fw8",
+    "uw9",
+    "dw9",
+    "jw9",
+    "aw9",
+    "fw9",
+    "uw10",
+    "dw10",
+    "jw10",
+    "aw10",
+    "fw10"
+  ],
+  "test": [
+    "u1",
+    "d1",
+    "j1",
+    "a1",
+    "f1",
+    "u2",
+    "d2",
+    "j2",
+    "a2",
+    "f2",
+    "u3",
+    "d3",
+    "j3",
+    "a3",
+    "f3",
+    "u5",
+    "d5",
+    "j5",
+    "a5",
+    "f5",
+    "u6",
+    "d6",
+    "j6",
+    "a6",
+    "f6",
+    "u7",
+    "d7",
+    "j7",
+    "a7",
+    "f7",
+    "u8",
+    "d8",
+    "j8",
+    "a8",
+    "f8",
+    "u9",
+    "d9",
+    "j9",
+    "a9",
+    "f9",
+    "u10",
+    "d10",
+    "j10",
+    "a10",
+    "f10",
+    "u4",
+    "d4",
+    "j4",
+    "a4",
+    "f4"
+  ],
+  "tasks": [
+    {
+      "id": "u1",
+      "family": "unicode",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, fix the reverse() function in bug.cjs so it reverses by Unicode code points instead of UTF-16 code units - surrogate pairs (emoji like U+1F600) must stay intact. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "u2",
+      "family": "unicode",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, fix truncate(str, n) in bug.cjs so it keeps the first n Unicode code points - an emoji counts as one and must never be cut in half. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "u3",
+      "family": "unicode",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, fix countCodePoints(str) in bug.cjs so it counts Unicode code points, not UTF-16 units. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "u4",
+      "family": "unicode",
+      "position": 4,
+      "heldOut": true,
+      "prompt": "In the current directory, fix ellipsize(str, n) in bug.cjs: if the string fits within n code points return it unchanged; otherwise return the first n code points plus a single '...'. Both the fit check and the cut must be code-point based. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "d1",
+      "family": "date",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, fix formatUtc(epochMs) in bug.cjs so it formats the instant in UTC as zero-padded 'YYYY-MM-DD HH:mm:ss' using UTC getters, never local time. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "d2",
+      "family": "date",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, fix addDaysUtc(isoDate, days) in bug.cjs to use UTC-only arithmetic for 'YYYY-MM-DD' dates; month and year boundaries must roll over correctly. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "d3",
+      "family": "date",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, fix daysBetweenUtc(a, b) in bug.cjs to return the exact number of whole UTC days between two ISO dates - real month lengths, no 30-day approximation. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "d4",
+      "family": "date",
+      "position": 4,
+      "heldOut": true,
+      "prompt": "In the current directory, fix nextMondayUtc(isoDate) in bug.cjs to return the ISO date of the next Monday STRICTLY AFTER the given date - a Monday input yields the Monday one week later. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "j1",
+      "family": "json",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, fix strictParse(text) in bug.cjs so a JSON syntax failure returns { ok: false, line, col } with the 1-based line and column of the error (the engine reports them in the error message). When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "j2",
+      "family": "json",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, fix deepClone(obj) in bug.cjs so it returns a DEEP clone - mutating the clone at any depth must not affect the original; primitives and null pass through unchanged. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "j3",
+      "family": "json",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, fix flatten(obj) in bug.cjs so arrays also flatten with numeric key segments: {a:{b:1},c:[2,3]} becomes {'a.b':1,'c.0':2,'c.1':3}. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "j4",
+      "family": "json",
+      "position": 4,
+      "heldOut": true,
+      "prompt": "In the current directory, fix unflatten(flat) in bug.cjs so dot keys restore into nested objects, and any node whose child keys are all numeric restores as an ARRAY. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "a1",
+      "family": "async",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, fix readFileP(path) in bug.cjs so it rejects with the original error when the read fails (e.g. ENOENT) instead of swallowing it. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "a2",
+      "family": "async",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, fix waterfall(steps) in bug.cjs so the steps run sequentially with result chaining, stopping at the first rejection without ever calling later steps. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "a3",
+      "family": "async",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, fix retry(fn, opts) in bug.cjs: exactly retries+1 total attempts, resolve on the first success, and reject with the LAST error after all attempts fail (never resolve undefined). When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "a4",
+      "family": "async",
+      "position": 4,
+      "heldOut": true,
+      "prompt": "In the current directory, fix partition(work) in bug.cjs so it never rejects: await everything with allSettled semantics and return { fulfilled, rejected } with results in original input order. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "f1",
+      "family": "file",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, fix atomicWrite(filePath, data) in bug.cjs so the data lands on the target file via temp-file + rename and no temp files are left behind. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "f2",
+      "family": "file",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, fix updateJson(filePath, updates) in bug.cjs so top-level updates merge into the existing JSON content, preserving every key not mentioned in updates. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "f3",
+      "family": "file",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, fix appendLine(filePath, line) in bug.cjs so it appends the line with a trailing newline (preserving existing lines) and returns the total line count after the append. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "f4",
+      "family": "file",
+      "position": 4,
+      "heldOut": true,
+      "prompt": "In the current directory, fix rotateBackup(filePath, keep) in bug.cjs so backups shift up one slot, the main file becomes file.1, and at most `keep` backups ever exist. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "uw1",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix lastCodePoint(str) in bug.cjs so it returns the last Unicode code point (an emoji is one code point and must stay whole). When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw2",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix insertAt(str, index, insertion) in bug.cjs so the index counts Unicode code points and never cuts a surrogate pair. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "u5",
+      "family": "unicode",
+      "position": 4,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix nthCodePointValue(str, i) in bug.cjs so it returns the numeric code point value of the i-th code point (an emoji is one code point, e.g. 0x1F600), or undefined when out of range. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "u6",
+      "family": "unicode",
+      "position": 5,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix swapHalves(str) in bug.cjs so it splits by code points, swaps the two halves, and keeps the middle code point in place for odd lengths. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "dw1",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix isLeapYearUtc(year) in bug.cjs to apply the full Gregorian rule (divisible by 4, except centuries unless divisible by 400). When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw2",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix startOfMonthUtc(isoDate) in bug.cjs to return the first day of the date month as YYYY-MM-01 using UTC-only math. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "d5",
+      "family": "date",
+      "position": 4,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix prevMonthEndUtc(isoDate) in bug.cjs to return the last day of the previous month with real month lengths, UTC only. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "d6",
+      "family": "date",
+      "position": 5,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix quarterStartUtc(isoDate) in bug.cjs to return the quarter first day as zero-padded YYYY-MM-01, UTC only. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "jw1",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix getPath(obj, path) in bug.cjs so dotted-path lookup returns undefined for missing or null intermediates and never throws. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw2",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix omit(obj, keys) in bug.cjs so it returns a copy without the listed keys and never mutates the original. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "j5",
+      "family": "json",
+      "position": 4,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix mergeDeep(a, b) in bug.cjs: plain objects merge recursively with b winning, arrays are replaced, inputs never mutated. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "j6",
+      "family": "json",
+      "position": 5,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix stableStringify(obj) in bug.cjs so object keys are recursively sorted, making key order irrelevant to the output. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "aw1",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix withTimeout(promise, ms) in bug.cjs so a slow input rejects with Error(timeout) within ms while fast settle outcomes pass through. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw2",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix mapLimit(items, limit, fn) in bug.cjs so at most limit run concurrently, results keep input order, and errors propagate. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "a5",
+      "family": "async",
+      "position": 4,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix firstSuccess(promises) in bug.cjs: resolve with the first fulfilled value; only when every promise rejects, reject with the array of reasons. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "a6",
+      "family": "async",
+      "position": 5,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix once(fn) in bug.cjs so even CONCURRENT calls share a single execution of the async fn. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "fw1",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix writeIfChanged(filePath, data) in bug.cjs so identical content reports changed:false and leaves the mtime untouched. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw2",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix readJson(filePath, fallback) in bug.cjs so missing or corrupt files return the fallback instead of throwing. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "f5",
+      "family": "file",
+      "position": 4,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix listJson(dir) in bug.cjs so it reads only .json files, skips unparseable ones, and ignores other files. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "f6",
+      "family": "file",
+      "position": 5,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix copyIfNewer(src, dst) in bug.cjs so it copies only when src is newer than dst (or dst is missing) and leaves dst untouched otherwise. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "uw3",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix firstCodePoint(str) in bug.cjs so it returns the first Unicode code point (emoji stays whole). When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw4",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix isNonBmpAt(str, i) in bug.cjs so it tells whether the i-th code point is non-BMP (value >= 0x10000). When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw5",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix removeAt(str, i) in bug.cjs so it removes the i-th code point and never cuts surrogate pairs. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw6",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix codePointValues(str) in bug.cjs so it returns one numeric value per code point. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw7",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix padStartCodePoints(str, n, ch) in bug.cjs so padding counts code points, not UTF-16 units. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw8",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix lastIndexOfCodePoint(str, ch) in bug.cjs so it returns a code point index, or -1 when absent. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw9",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix takeWhileBmp(str) in bug.cjs so it returns the leading BMP run and stops before the first emoji without emitting broken surrogates. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "uw10",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix zipStrings(a, b) in bug.cjs so it interleaves whole code points. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "u7",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix substringByCodePoints(str, start, end) in bug.cjs so slicing counts code points and never cuts surrogate pairs. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "u8",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix replaceCodePointAt(str, i, repl) in bug.cjs so it replaces the i-th code point (repl may be emoji); out of range unchanged. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "u9",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix countOccurrences(str, sub) in bug.cjs so it counts every non-overlapping occurrence (sub may be emoji). When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "u10",
+      "family": "unicode",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix reverseWords(str) in bug.cjs so each word reverses by code points with emoji intact. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "dw3",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix endOfMonthUtc(isoDate) in bug.cjs to return the last day of the own month with real month lengths, UTC only. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw4",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix sameDayUtc(a, b) in bug.cjs so two ISO date-times compare by UTC calendar day. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw5",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix addMonthsUtc(isoDate, months) in bug.cjs so shifting clamps to the target month end, UTC only. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw6",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix isWeekendUtc(isoDateTime) in bug.cjs so the weekday is read in UTC. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw7",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix daysUntilUtc(fromIso, toIso) in bug.cjs to exact UTC day math (no 30-day approximation). When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw8",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix isoWeekdayUtc(isoDateTime) in bug.cjs so it returns the UTC weekday 0-6. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw9",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix monthOfUtc(isoDateTime) in bug.cjs to return zero-padded YYYY-MM in UTC. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "dw10",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix nextDayUtc(isoDate) in bug.cjs so the next day is computed purely in UTC. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "d7",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix firstDayNextMonthUtc(isoDate) in bug.cjs so months roll over years and stay zero-padded. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "d8",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix daysInMonthUtc(isoDate) in bug.cjs so it returns the real month length. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "d9",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix utcPartsFromEpoch(epochMs) in bug.cjs so every field is zero-padded and read in UTC. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "d10",
+      "family": "date",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix isoDateFromParts(y, m, d) in bug.cjs so month and day are zero-padded. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "jw3",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix setPath(obj, path, value) in bug.cjs so missing intermediates are created and nothing throws. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw4",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix pick(obj, keys) in bug.cjs so it copies only the listed keys without mutating the original. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw5",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix deepEqualJson(a, b) in bug.cjs so object key order never changes the verdict. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw6",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix groupBy(arr, key) in bug.cjs so groups accumulate into arrays. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw7",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix uniqueByKey(arr, key) in bug.cjs so the FIRST occurrence and order are kept. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw8",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix sortByKey(arr, key) in bug.cjs so it sorts a copy by the key field. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw9",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix flattenPaths(obj) in bug.cjs so every leaf path is listed recursively and sorted. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "jw10",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix fromPairs(pairs) in bug.cjs so duplicate keys keep the LAST value. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "j7",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix deletePath(obj, path) in bug.cjs so it removes the leaf immutably and never throws on missing paths. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "j8",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix sortByPath(arr, path) in bug.cjs so it sorts by a NESTED dot path on a copy. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "j9",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix invert(obj) in bug.cjs so value collisions keep the LAST key. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "j10",
+      "family": "json",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix countLeaves(obj) in bug.cjs so it counts every primitive leaf (arrays count elements). When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "aw3",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix sleep(ms, value) in bug.cjs so it resolves the value only after the timer elapses. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw4",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix sequence(steps) in bug.cjs so steps chain in order, collect results, and stop at the first failure. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw5",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix memoizeAsync(fn) in bug.cjs so caching is keyed by the first argument and rejections are never cached. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw6",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix withRetry(fn, opts) in bug.cjs so retries honor shouldRetry and the last error propagates. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw7",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix settleSummary(promise) in bug.cjs so it always resolves with a status object. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw8",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix timeoutFallback(promise, ms, fallbackValue) in bug.cjs so a timeout resolves the fallback instead of hanging. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw9",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix forEachSeq(items, fn) in bug.cjs so it awaits strictly in order and stops on failure. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "aw10",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix allCounted(promises) in bug.cjs so it never rejects and counts fulfilled and rejected. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "a7",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix retryUntil(fn, opts) in bug.cjs so it retries until isDone is true or attempts run out. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "a8",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix withTimeoutResult(promise, ms) in bug.cjs so it never rejects and reports timeouts and errors as { ok: false, reason }. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "a9",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix firstTruthy(items, fn) in bug.cjs so it returns the first ITEM whose fn is truthy and stops calling fn. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "a10",
+      "family": "async",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix parallelMap(items, limit, fn) in bug.cjs so concurrency is bounded, order kept, and failures become error slots without rejecting. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "fw3",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix ensureDir(dir) in bug.cjs so it creates missing parents and never throws on existing dirs. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw4",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix removeIfEmpty(dir) in bug.cjs so non-empty directories always survive. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw5",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix appendJsonLine(file, obj) in bug.cjs so existing lines are preserved. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw6",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix fileSize(file) in bug.cjs so missing files resolve null instead of throwing. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw7",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix touchMtime(file, epochMs) in bug.cjs so the mtime changes while the content survives. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw8",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix moveFile(src, dst) in bug.cjs so an existing destination blocks the move instead of being overwritten. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw9",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix listDirs(base) in bug.cjs so only sorted subdirectory names are returned. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "fw10",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": true,
+      "prompt": "In the current directory, fix readFirstLine(file) in bug.cjs so it returns the first line, or null for an empty file. When done, run: node test.cjs - it must print PASS.",
+      "set": "train"
+    },
+    {
+      "id": "f7",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix writeTextIfMissing(file, data) in bug.cjs so existing files and their mtimes stay untouched. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "f8",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix concatFiles(dst, srcs) in bug.cjs so every source is concatenated in order. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "f9",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix copyFiles(srcDir, dstDir) in bug.cjs so only FILES are copied and the count is returned. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    },
+    {
+      "id": "f10",
+      "family": "file",
+      "position": 0,
+      "heldOut": false,
+      "warmup": false,
+      "prompt": "In the current directory, fix newestFile(dir) in bug.cjs so it resolves the most recently modified FILE, or null. When done, run: node test.cjs - it must print PASS.",
+      "set": "test"
+    }
+  ]
+}

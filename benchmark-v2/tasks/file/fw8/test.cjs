@@ -1,0 +1,21 @@
+const { moveFile } = require('./bug.cjs')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+async function main() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw8-'))
+  const a = path.join(dir, 'a.txt')
+  const b = path.join(dir, 'b.txt')
+  fs.writeFileSync(a, 'A')
+  fs.writeFileSync(b, 'ORIGINAL B')
+  const blocked = await moveFile(a, b)
+  if (blocked.moved) throw new Error('existing dst must block the move')
+  if (fs.readFileSync(b, 'utf8') !== 'ORIGINAL B') throw new Error('existing dst content must survive')
+  if (!fs.existsSync(a)) throw new Error('src must still exist when blocked')
+
+  const c = path.join(dir, 'c.txt')
+  const moved = await moveFile(a, c)
+  if (!moved.moved || fs.readFileSync(c, 'utf8') !== 'A' || fs.existsSync(a)) throw new Error('fresh dst must accept the move')
+  console.log('PASS: moveFile refuses to overwrite an existing destination')
+}
+main().then(undefined, (error) => { console.error('FAIL:', error && error.message); process.exit(1) })

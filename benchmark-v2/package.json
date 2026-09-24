@@ -1,0 +1,15 @@
+{
+  "name": "dsh-self-improving-benchmark-v2",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Real-agent usefulness-over-use benchmark for the dsh-self-improving plugin (WebUI-driven, human-watchable)",
+  "scripts": {
+    "prepare": "node src/run.mjs prepare",
+    "verify-seeds": "node src/run.mjs verify-seeds",
+    "smoke": "node src/run.mjs smoke",
+    "run:baseline": "node src/run.mjs run --arm baseline",
+    "run:enabled": "node src/run.mjs run --arm enabled",
+    "report": "node src/run.mjs report"
+  }
+}

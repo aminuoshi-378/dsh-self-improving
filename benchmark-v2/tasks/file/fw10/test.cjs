@@ -1,0 +1,18 @@
+const { readFirstLine } = require('./bug.cjs')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+async function main() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw10-'))
+  const multi = path.join(dir, 'multi.txt')
+  fs.writeFileSync(multi, 'first\nsecond\nthird\n')
+  if (await readFirstLine(multi) !== 'first') throw new Error('must return only the first line')
+  const single = path.join(dir, 'single.txt')
+  fs.writeFileSync(single, 'only')
+  if (await readFirstLine(single) !== 'only') throw new Error('single line without newline')
+  const empty = path.join(dir, 'empty.txt')
+  fs.writeFileSync(empty, '')
+  if (await readFirstLine(empty) !== null) throw new Error('empty file resolves null')
+  console.log('PASS: readFirstLine handles multi, single and empty files')
+}
+main().then(undefined, (error) => { console.error('FAIL:', error && error.message); process.exit(1) })

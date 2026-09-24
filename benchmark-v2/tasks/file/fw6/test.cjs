@@ -1,0 +1,16 @@
+const { fileSize } = require('./bug.cjs')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+async function main() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fw6-'))
+  const file = path.join(dir, 'data.bin')
+  fs.writeFileSync(file, Buffer.alloc(42))
+  if (await fileSize(file) !== 42) throw new Error('size must be 42 bytes')
+  const empty = path.join(dir, 'empty')
+  fs.writeFileSync(empty, '')
+  if (await fileSize(empty) !== 0) throw new Error('empty file is 0 bytes')
+  if (await fileSize(path.join(dir, 'nope')) !== null) throw new Error('missing file resolves null')
+  console.log('PASS: fileSize never throws on missing files')
+}
+main().then(undefined, (error) => { console.error('FAIL:', error && error.message); process.exit(1) })

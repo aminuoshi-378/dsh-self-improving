@@ -1,0 +1,28 @@
+const { copyFiles } = require('./bug.cjs')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+async function main() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'f9-'))
+  const src = path.join(base, 'src')
+  const dst = path.join(base, 'dst')
+  fs.mkdirSync(src)
+  fs.writeFileSync(path.join(src, 'a.txt'), 'A')
+  fs.writeFileSync(path.join(src, 'b.txt'), 'B')
+  fs.mkdirSync(path.join(src, 'nested'))
+  fs.writeFileSync(path.join(src, 'nested', 'c.txt'), 'C')
+
+  const count = await copyFiles(src, dst)
+  if (count !== 2) throw new Error(`only files count, got ${count}`)
+  const entries = fs.readdirSync(dst).sort()
+  if (JSON.stringify(entries) !== JSON.stringify(['a.txt', 'b.txt'])) throw new Error(`subdirs must be skipped, got ${JSON.stringify(entries)}`)
+  if (fs.readFileSync(path.join(dst, 'a.txt'), 'utf8') !== 'A') throw new Error('file content must copy')
+
+  const emptyBase = fs.mkdtempSync(path.join(os.tmpdir(), 'f9-'))
+  const emptySrc = path.join(emptyBase, 'none')
+  fs.mkdirSync(emptySrc)
+  const emptyCount = await copyFiles(emptySrc, path.join(emptyBase, 'out'))
+  if (emptyCount !== 0 || !fs.existsSync(path.join(emptyBase, 'out'))) throw new Error('empty src copies zero files but still creates dst')
+  console.log('PASS: copyFiles copies files only and reports the count')
+}
+main().then(undefined, (error) => { console.error('FAIL:', error && error.message); process.exit(1) })

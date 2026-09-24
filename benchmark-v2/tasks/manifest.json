@@ -1,0 +1,1009 @@
+{
+  "version": 5,
+  "train": [
+    "muw1",
+    "muw2",
+    "muw3",
+    "muw4",
+    "muw5",
+    "muw6",
+    "muw7",
+    "muw8",
+    "muw9",
+    "muw10",
+    "mdw1",
+    "mdw2",
+    "mdw3",
+    "mdw4",
+    "mdw5",
+    "mdw6",
+    "mdw7",
+    "mdw8",
+    "mdw9",
+    "mdw10",
+    "mjw1",
+    "mjw2",
+    "mjw3",
+    "mjw4",
+    "mjw5",
+    "mjw6",
+    "mjw7",
+    "mjw8",
+    "mjw9",
+    "mjw10",
+    "maw1",
+    "maw2",
+    "maw3",
+    "maw4",
+    "maw5",
+    "maw6",
+    "maw7",
+    "maw8",
+    "maw9",
+    "maw10",
+    "mfw1",
+    "mfw2",
+    "mfw3",
+    "mfw4",
+    "mfw5",
+    "mfw6",
+    "mfw7",
+    "mfw8",
+    "mfw9",
+    "mfw10"
+  ],
+  "test": [
+    "mu1",
+    "mu2",
+    "mu3",
+    "mu4",
+    "mu5",
+    "mu6",
+    "mu7",
+    "mu8",
+    "mu9",
+    "mu10",
+    "md1",
+    "md2",
+    "md3",
+    "md4",
+    "md5",
+    "md6",
+    "md7",
+    "md8",
+    "md9",
+    "md10",
+    "mj1",
+    "mj2",
+    "mj3",
+    "mj4",
+    "mj5",
+    "mj6",
+    "mj7",
+    "mj8",
+    "mj9",
+    "mj10",
+    "ma1",
+    "ma2",
+    "ma3",
+    "ma4",
+    "ma5",
+    "ma6",
+    "ma7",
+    "ma8",
+    "ma9",
+    "ma10",
+    "mf1",
+    "mf2",
+    "mf3",
+    "mf4",
+    "mf5",
+    "mf6",
+    "mf7",
+    "mf8",
+    "mf9",
+    "mf10"
+  ],
+  "tasks": [
+    {
+      "id": "muw1",
+      "family": "unicode",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu1",
+      "family": "unicode",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw2",
+      "family": "unicode",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu2",
+      "family": "unicode",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw3",
+      "family": "unicode",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu3",
+      "family": "unicode",
+      "position": 103,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw4",
+      "family": "unicode",
+      "position": 4,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu4",
+      "family": "unicode",
+      "position": 104,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw5",
+      "family": "unicode",
+      "position": 5,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu5",
+      "family": "unicode",
+      "position": 105,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw6",
+      "family": "unicode",
+      "position": 6,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu6",
+      "family": "unicode",
+      "position": 106,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw7",
+      "family": "unicode",
+      "position": 7,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu7",
+      "family": "unicode",
+      "position": 107,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw8",
+      "family": "unicode",
+      "position": 8,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu8",
+      "family": "unicode",
+      "position": 108,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw9",
+      "family": "unicode",
+      "position": 9,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu9",
+      "family": "unicode",
+      "position": 109,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "muw10",
+      "family": "unicode",
+      "position": 10,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mu10",
+      "family": "unicode",
+      "position": 110,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw1",
+      "family": "date",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md1",
+      "family": "date",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw2",
+      "family": "date",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md2",
+      "family": "date",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw3",
+      "family": "date",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md3",
+      "family": "date",
+      "position": 103,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw4",
+      "family": "date",
+      "position": 4,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md4",
+      "family": "date",
+      "position": 104,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw5",
+      "family": "date",
+      "position": 5,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md5",
+      "family": "date",
+      "position": 105,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw6",
+      "family": "date",
+      "position": 6,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md6",
+      "family": "date",
+      "position": 106,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw7",
+      "family": "date",
+      "position": 7,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md7",
+      "family": "date",
+      "position": 107,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw8",
+      "family": "date",
+      "position": 8,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md8",
+      "family": "date",
+      "position": 108,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw9",
+      "family": "date",
+      "position": 9,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md9",
+      "family": "date",
+      "position": 109,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mdw10",
+      "family": "date",
+      "position": 10,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "md10",
+      "family": "date",
+      "position": 110,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw1",
+      "family": "json",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj1",
+      "family": "json",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw2",
+      "family": "json",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj2",
+      "family": "json",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw3",
+      "family": "json",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj3",
+      "family": "json",
+      "position": 103,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw4",
+      "family": "json",
+      "position": 4,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj4",
+      "family": "json",
+      "position": 104,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw5",
+      "family": "json",
+      "position": 5,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj5",
+      "family": "json",
+      "position": 105,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw6",
+      "family": "json",
+      "position": 6,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj6",
+      "family": "json",
+      "position": 106,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw7",
+      "family": "json",
+      "position": 7,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj7",
+      "family": "json",
+      "position": 107,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw8",
+      "family": "json",
+      "position": 8,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj8",
+      "family": "json",
+      "position": 108,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw9",
+      "family": "json",
+      "position": 9,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj9",
+      "family": "json",
+      "position": 109,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mjw10",
+      "family": "json",
+      "position": 10,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mj10",
+      "family": "json",
+      "position": 110,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw1",
+      "family": "async",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma1",
+      "family": "async",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw2",
+      "family": "async",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma2",
+      "family": "async",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw3",
+      "family": "async",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma3",
+      "family": "async",
+      "position": 103,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw4",
+      "family": "async",
+      "position": 4,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma4",
+      "family": "async",
+      "position": 104,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw5",
+      "family": "async",
+      "position": 5,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma5",
+      "family": "async",
+      "position": 105,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw6",
+      "family": "async",
+      "position": 6,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma6",
+      "family": "async",
+      "position": 106,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw7",
+      "family": "async",
+      "position": 7,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma7",
+      "family": "async",
+      "position": 107,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw8",
+      "family": "async",
+      "position": 8,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma8",
+      "family": "async",
+      "position": 108,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw9",
+      "family": "async",
+      "position": 9,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma9",
+      "family": "async",
+      "position": 109,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "maw10",
+      "family": "async",
+      "position": 10,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ma10",
+      "family": "async",
+      "position": 110,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw1",
+      "family": "file",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf1",
+      "family": "file",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw2",
+      "family": "file",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf2",
+      "family": "file",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw3",
+      "family": "file",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf3",
+      "family": "file",
+      "position": 103,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw4",
+      "family": "file",
+      "position": 4,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf4",
+      "family": "file",
+      "position": 104,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw5",
+      "family": "file",
+      "position": 5,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf5",
+      "family": "file",
+      "position": 105,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw6",
+      "family": "file",
+      "position": 6,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf6",
+      "family": "file",
+      "position": 106,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw7",
+      "family": "file",
+      "position": 7,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf7",
+      "family": "file",
+      "position": 107,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw8",
+      "family": "file",
+      "position": 8,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf8",
+      "family": "file",
+      "position": 108,
+      "heldOut": true,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw9",
+      "family": "file",
+      "position": 9,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf9",
+      "family": "file",
+      "position": 109,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "mfw10",
+      "family": "file",
+      "position": 10,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "mf10",
+      "family": "file",
+      "position": 110,
+      "heldOut": false,
+      "prompt": "In the current directory, node test.cjs fails: the workspace does not meet its contract yet. The tests are the complete specification — study the failing output, work out the intended behavior, and fix the workspace so that node test.cjs prints PASS. Do not modify test.cjs.",
+      "warmup": false,
+      "set": "test"
+    }
+  ]
+}

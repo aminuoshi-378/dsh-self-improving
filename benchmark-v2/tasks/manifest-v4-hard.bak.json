@@ -1,0 +1,309 @@
+{
+  "version": 4,
+  "train": [
+    "uhw1",
+    "uhw2",
+    "uhw3",
+    "dhw1",
+    "dhw2",
+    "dhw3",
+    "jhw1",
+    "jhw2",
+    "jhw3",
+    "ahw1",
+    "ahw2",
+    "ahw3",
+    "fhw1",
+    "fhw2",
+    "fhw3"
+  ],
+  "test": [
+    "uh1",
+    "uh2",
+    "uh3",
+    "dh1",
+    "dh2",
+    "dh3",
+    "jh1",
+    "jh2",
+    "jh3",
+    "ah1",
+    "ah2",
+    "ah3",
+    "fh1",
+    "fh2",
+    "fh3"
+  ],
+  "tasks": [
+    {
+      "id": "uhw1",
+      "family": "unicode",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, make reverse(str) in bug.cjs reverse by user-perceived characters (grapheme clusters) per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "uh1",
+      "family": "unicode",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, make reverse(str) in bug.cjs reverse by user-perceived characters (grapheme clusters) per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "uhw2",
+      "family": "unicode",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, make sameVisual(a, b) in bug.cjs compare strings by visual equality per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "uh2",
+      "family": "unicode",
+      "position": 102,
+      "heldOut": true,
+      "prompt": "In the current directory, make groupVisual(arr) in bug.cjs compare strings by visual equality per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "uhw3",
+      "family": "unicode",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, make displayWidth(str) in bug.cjs return the terminal display width per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "uh3",
+      "family": "unicode",
+      "position": 103,
+      "heldOut": false,
+      "prompt": "In the current directory, make displayWidth(str) and padTo(str, width) in bug.cjs return the display width and pad to a target width per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "dhw1",
+      "family": "date",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, make diffMonthsDays(fromISO, toISO) in bug.cjs return the calendar-month distance per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "dh1",
+      "family": "date",
+      "position": 101,
+      "heldOut": true,
+      "prompt": "In the current directory, make diffMonthsDays(fromISO, toISO) in bug.cjs return the calendar-month distance per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "dhw2",
+      "family": "date",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, make addBusinessDays(isoDate, n) in bug.cjs skip weekends in business-day arithmetic per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "dh2",
+      "family": "date",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, make addBusinessDays(isoDate, n) in bug.cjs skip weekends in business-day arithmetic per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "dhw3",
+      "family": "date",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, make isoWeek(isoDate) in bug.cjs return ISO 8601 week numbering per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "dh3",
+      "family": "date",
+      "position": 103,
+      "heldOut": false,
+      "prompt": "In the current directory, make isoWeek(isoDate) in bug.cjs return ISO 8601 week numbering per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "jhw1",
+      "family": "json",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, make getPath(obj, path, fallback) in bug.cjs read dotted paths with array indexing per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "jh1",
+      "family": "json",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, make getPath(obj, path, fallback) in bug.cjs read dotted paths with array indexing per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "jhw2",
+      "family": "json",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, make flatten(obj, prefix) in bug.cjs flatten nested objects and guard cycles per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "jh2",
+      "family": "json",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, make flatten(obj, prefix) in bug.cjs flatten nested objects and guard cycles per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "jhw3",
+      "family": "json",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, make validate(value, schema) in bug.cjs return schema validation errors per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "jh3",
+      "family": "json",
+      "position": 103,
+      "heldOut": false,
+      "prompt": "In the current directory, make validate(value, schema) in bug.cjs return schema validation errors per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "ahw1",
+      "family": "async",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, make mapLimit(items, limit, fn) in bug.cjs run with a concurrency cap and aggregate errors per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ah1",
+      "family": "async",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, make mapLimit(items, limit, fn) in bug.cjs run with a concurrency cap and aggregate errors per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "ahw2",
+      "family": "async",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, make retryWithBackoff(fn, opts) in bug.cjs retry both sync throws and async rejections per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ah2",
+      "family": "async",
+      "position": 102,
+      "heldOut": false,
+      "prompt": "In the current directory, make retryWithBackoff(fn, opts) in bug.cjs retry both sync throws and async rejections per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "ahw3",
+      "family": "async",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, make createQueue(concurrency) in bug.cjs be a bounded FIFO task queue per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "ah3",
+      "family": "async",
+      "position": 103,
+      "heldOut": false,
+      "prompt": "In the current directory, make createQueue(concurrency) in bug.cjs be a bounded FIFO task queue per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "fhw1",
+      "family": "file",
+      "position": 1,
+      "heldOut": false,
+      "prompt": "In the current directory, make dirStats(dir) in bug.cjs recursively count files and bytes while skipping symlinks per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "fh1",
+      "family": "file",
+      "position": 101,
+      "heldOut": false,
+      "prompt": "In the current directory, make dirStats(dir) in bug.cjs recursively count files and bytes while skipping symlinks per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "fhw2",
+      "family": "file",
+      "position": 2,
+      "heldOut": false,
+      "prompt": "In the current directory, make appendDedup(file, line, window) in bug.cjs append with a trailing dedup window per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "fh2",
+      "family": "file",
+      "position": 102,
+      "heldOut": true,
+      "prompt": "In the current directory, make appendDedup(file, line, window) in bug.cjs append with a trailing dedup window per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    },
+    {
+      "id": "fhw3",
+      "family": "file",
+      "position": 3,
+      "heldOut": false,
+      "prompt": "In the current directory, make parseIni(text) in bug.cjs parse the INI format per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": true,
+      "set": "train"
+    },
+    {
+      "id": "fh3",
+      "family": "file",
+      "position": 103,
+      "heldOut": false,
+      "prompt": "In the current directory, make stringifyIni(doc) in bug.cjs serialize the parsed INI shape back to text per the full rules in the comments at the top of bug.cjs. When done, run: node test.cjs - it must print PASS.",
+      "warmup": false,
+      "set": "test"
+    }
+  ]
+}
